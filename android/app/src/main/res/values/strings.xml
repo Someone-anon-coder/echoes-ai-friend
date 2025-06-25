@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Echoes AI Friend</string>
+    <string name="title_activity_main">Echoes AI Friend</string>
+    <string name="package_name">com.echoesai.app</string>
+    <string name="custom_url_scheme">com.echoesai.app</string>
+</resources>
