@@ -1,12 +1,9 @@
-// TODO: Replace with your actual Firebase project configuration
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID",
-  measurementId: "YOUR_MEASUREMENT_ID" // Optional: for Google Analytics
+  apiKey: "AIzaSyASeFGh4piroxG0murUx01eus8haQbEdjs",
+  authDomain: "echoesai-66cb4.firebaseapp.com",
+  projectId: "echoesai-66cb4",
+  storageBucket: "echoesai-66cb4.firebasestorage.app",
+  messagingSenderId: "160638372769",
+  appId: "1:160638372769:web:956447436a762f44ff99e0",
+  measurementId: "G-9TD2EV0TKD"
 };
-
-export default firebaseConfig;
