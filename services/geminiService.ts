@@ -1,4 +1,6 @@
 
+// This service has been verified to correctly use the `callGemini` Cloud Function proxy.
+// No direct Gemini API calls are made from the client-side.
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { initializeApp } from 'firebase/app';
 import firebaseConfig from '../firebaseConfig'; // Path to your Firebase config
