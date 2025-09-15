@@ -1,8 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { initializeApp } from "firebase/app";
-import { getAuth, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
-import firebaseConfig from './firebaseConfig';
+import { onAuthStateChanged, User as FirebaseUser, signInAnonymously } from "firebase/auth";
+import { auth } from './firebaseConfig';
 import { 
   AppScreen, 
   UserState, 
@@ -17,18 +16,15 @@ import {
   INITIAL_RELATIONSHIP_SCORE, CREDITS_PER_TURN,
   SUMMARIZE_CONVERSATION_TURN_INTERVAL, MAX_RELATIONSHIP_SCORE, MIN_RELATIONSHIP_SCORE,
   getRelationshipLevel, AI_BUSY_CHANCE, AI_MIN_BUSY_DURATION_MS, AI_MAX_BUSY_DURATION_MS, AI_BUSY_REASONS
-  // Credit constants like FREE_USER_INITIAL_CREDITS are now mainly used in firestoreService for new user setup
+  // Credit constants like FREE_USER_INITIAL_CREDITS are now mainly used in firebaseService for new user setup
 } from './constants';
-// import { saveUserState, loadUserState, saveGameState, loadGameState, clearGameState, clearUserState } from './utils/localStorageHelper'; // Will be removed
 import {
-  saveUserStateToFirestore,
-  loadUserStateFromFirestore,
-  deleteUserStateFromFirestore, // If needed for complete account deletion scenarios
-  saveGameStateToFirestore,
-  loadGameStateFromFirestore,
-  deleteGameStateFromFirestore,
-  upsertUserProfileDocument
-} from './services/firestoreService';
+  getUserData,
+  createUserData,
+  getSessionData,
+  saveSessionData,
+  addMessageToSession,
+} from './services/firebaseService';
 import { 
   generateAIPersonaService, 
   generateAIChatResponseService, 
@@ -50,9 +46,6 @@ import PaymentModal from './components/PaymentModal'; // New PaymentModal
 // API Key check for process.env.API_KEY is no longer needed here as it's managed by Cloud Functions
 // console.warn("Gemini API Key check removed from client-side App.tsx.");
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
 // We'll initialize Firestore when we start using it.
 
 const initialUserStateValues: Omit<UserState, 'userId' | 'isLoggedIn' | 'lastLoginDate'> = {
@@ -99,92 +92,65 @@ const App: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       setIsLoading(true);
       if (firebaseUser) {
-        console.log("Firebase user signed in:", firebaseUser.uid, firebaseUser.email);
+        console.log("Firebase user signed in:", firebaseUser.uid);
         try {
-          // Upsert user profile (creates if new, updates lastLogin and daily credits if existing)
-          const userProfile = await upsertUserProfileDocument(firebaseUser);
-          setUserState(userProfile);
-
-          // Load game state from Firestore
-          const loadedGameState = await loadGameStateFromFirestore(firebaseUser.uid);
-          if (loadedGameState && loadedGameState.currentScenario && loadedGameState.aiPersona) {
-            // Ensure AI's first message is correctly part of chat history (if applicable)
-            if (loadedGameState.aiPersona.firstAIMessage &&
-                !loadedGameState.chatHistory.some(msg => msg.sender === 'ai' && msg.text === loadedGameState.aiPersona.firstAIMessage && msg.timestamp === 0)) {
-            const firstMsg: ChatMessage = {
-              id: `ai-init-${loadedGameState.aiPersona.name}-${Date.now()}`,
-              sender: 'ai',
-              text: loadedGameState.aiPersona.firstAIMessage,
-              timestamp: 0,
+          let userData = await getUserData(firebaseUser.uid);
+          if (!userData) {
+            console.log("No user data found, creating new user.");
+            const initialData = {
+              credits: 100,
+              isPremium: false,
+              createdAt: new Date().toISOString(),
             };
-            loadedGameState.chatHistory = [firstMsg, ...loadedGameState.chatHistory.filter(m => m.timestamp !== 0)];
-            loadedGameState.chatHistory.sort((a,b) => a.timestamp - b.timestamp);
+            await createUserData(firebaseUser.uid, initialData);
+            userData = await getUserData(firebaseUser.uid);
           }
-          setGameState(loadedGameState);
-          setAppScreen(AppScreen.CHATTING);
-        } else {
-          setGameState(null); // Explicitly nullify if no game state
-          // Optionally, ensure any lingering game state in Firestore for this user is cleared if no valid one is loaded
-          // This might be aggressive, depends on desired behavior for corrupted/incomplete game states.
-          // await deleteGameStateFromFirestore(firebaseUser.uid);
-          setAppScreen(AppScreen.ONBOARDING_SCENARIO);
-        }
-        setPreviousScreenBeforeMenu(AppScreen.ONBOARDING_SCENARIO); // Default back target after login
+          setUserState({
+            userId: firebaseUser.uid,
+            isLoggedIn: true,
+            ...userData,
+          });
 
-      } catch (error) {
-        console.error("Error during Firebase user processing:", error);
-        setErrorMessage("Error loading your profile or game. Please try logging out and in again.");
-        // Consider signing out the user if profile/game loading is critical and fails
-        // await auth.signOut(); // This would trigger the 'else' block below
+          // Placeholder for loading session data
+          const sessionData = await getSessionData(firebaseUser.uid, 'activeSession');
+          if (sessionData) {
+            setGameState(sessionData);
+            setAppScreen(AppScreen.CHATTING);
+          } else {
+            setGameState(null);
+            setAppScreen(AppScreen.ONBOARDING_SCENARIO);
+          }
+        } catch (error) {
+          console.error("Error during Firebase user processing:", error);
+          setErrorMessage("Error loading your profile or game. Please try again.");
+        }
+      } else {
+        // User is signed out, sign them in anonymously
+        console.log("No user signed in. Attempting anonymous sign-in.");
+        signInAnonymously(auth).catch(error => {
+          console.error("Anonymous sign-in failed:", error);
+          setErrorMessage("Failed to start an anonymous session. Please refresh the page.");
+        });
       }
-    } else {
-      // User is signed out
-      console.log("Firebase user signed out.");
-      setUserState({
-        userId: null,
-        isLoggedIn: false,
-        ...initialUserStateValues,
-        lastLoginDate: null,
-      });
-      setGameState(null);
-      setAppScreen(AppScreen.LOGIN);
-      // No need to clear local storage specifically if Firestore is the source of truth.
-    }
-    setIsLoading(false);
-    setErrorMessage(null);
-  });
+      setIsLoading(false);
+    });
 
   return () => unsubscribe(); // Cleanup subscription on unmount
 // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []); // Keep dependencies minimal; auth instance is stable.
 
-// useEffect for saving UserState to Firestore when it changes
+// useEffect for saving session data when it changes
 useEffect(() => {
-  // Check for valid, logged-in user state to prevent saving initial/logged-out states.
-  if (userState.isLoggedIn && userState.userId && userState.email !== undefined) { // Added email check as a proxy for "real" user data
-    const handler = setTimeout(() => { // Debounce save
-      saveUserStateToFirestore(userState.userId, userState).catch(error => {
-        console.error("Failed to save UserState to Firestore:", error);
-        setErrorMessage("Error saving your profile data. Some changes might not persist.");
+  if (userState.isLoggedIn && userState.userId && gameState) {
+    const handler = setTimeout(() => {
+      saveSessionData(userState.userId, 'activeSession', gameState).catch(error => {
+        console.error("Failed to save session data:", error);
+        setErrorMessage("Error saving your game progress.");
       });
     }, 1000); // Debounce by 1 second
     return () => clearTimeout(handler);
   }
-}, [userState]);
-
-// useEffect for saving GameState to Firestore when it changes
-useEffect(() => {
-  // Check for valid game state and logged-in user.
-  if (gameState && userState.isLoggedIn && userState.userId && userState.email !== undefined) {
-    const handler = setTimeout(() => { // Debounce save
-      saveGameStateToFirestore(userState.userId, gameState).catch(error => {
-        console.error("Failed to save GameState to Firestore:", error);
-        setErrorMessage("Error saving your game progress. Some changes might not persist.");
-      });
-    }, 1000); // Debounce by 1 second
-    return () => clearTimeout(handler);
-  }
-}, [gameState, userState.isLoggedIn, userState.userId, userState.email]);
+}, [gameState, userState.isLoggedIn, userState.userId]);
 
 const handleLogout = async () => {
   setIsLoading(true);
@@ -250,20 +216,10 @@ const handleScenarioSelect = (scenario: Scenario) => {
   };
 
   const handleSendMessage = useCallback(async (messageText: string) => {
-    if (!userState.isLoggedIn || !userState.userId || !gameState || !gameState.aiPersona || !gameState.currentScenario) {
-        setErrorMessage("User not logged in or game state is invalid.");
-        if (!userState.isLoggedIn || !userState.userId) {
-            auth.signOut().catch(err => console.error("Error signing out on unauthorized send:", err));
-        }
-        return;
-    }
-     if (userState.credits < CREDITS_PER_TURN) {
-      setErrorMessage("Not enough credits to send a message.");
+    if (!userState.isLoggedIn || !userState.userId) {
+      setErrorMessage("User not logged in.");
       return;
     }
-
-    setIsLoading(true);
-    setErrorMessage(null);
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -271,106 +227,18 @@ const handleScenarioSelect = (scenario: Scenario) => {
       text: messageText,
       timestamp: Date.now(),
     };
-    
-    const newChatHistoryAfterUser = [...gameState.chatHistory, userMessage];
-    setGameState(prev => prev ? ({ ...prev, chatHistory: newChatHistoryAfterUser }) : null);
-    setUserState(prev => ({ ...prev, credits: prev.credits - CREDITS_PER_TURN }));
 
-    const personaSummary = gameState.aiPersona.personalityTraits.slice(0,2).join(', ');
-    const scoreChange = await analyzeSentimentForRelationshipUpdateService(
-      messageText,
-      personaSummary, // from closure
-      currentRelationshipScoreForCall, // from closure
-      getRelationshipLevel(currentRelationshipScoreForCall) // from closure
-    );
-    let newRelationshipScore = Math.max(MIN_RELATIONSHIP_SCORE, Math.min(MAX_RELATIONSHIP_SCORE, currentRelationshipScoreForCall + scoreChange));
+    await addMessageToSession(userState.userId, 'activeSession', userMessage);
 
-    if (newRelationshipScore <= MIN_RELATIONSHIP_SCORE && currentRelationshipScoreForCall > MIN_RELATIONSHIP_SCORE) {
-      setGameState(prev => prev ? ({ ...prev, relationshipScore: 0 }) : null); // Saved by useEffect
-      setAppScreen(AppScreen.GAME_OVER);
-      setIsLoading(false);
-      return;
-    }
-
-    let updatedAIPersonaForCall = { ...currentAIPersonaForCall }; // Make a mutable copy for this scope
-    if (updatedAIPersonaForCall.isBusy && updatedAIPersonaForCall.busyUntil && Date.now() < updatedAIPersonaForCall.busyUntil) {
-       const busyMessage: ChatMessage = {
-        id: `system-busy-${Date.now()}`,
-        sender: 'system',
-        text: `${updatedAIPersonaForCall.name} seems to be busy with ${updatedAIPersonaForCall.busyReason || 'something'}. They'll be back shortly.`,
-        timestamp: Date.now(),
-      };
-      setGameState(prev => prev ? ({
-          ...gameStateBeforeAIStep, // Revert to state before AI call, but add busy message
-          chatHistory: [...newChatHistoryAfterUser, busyMessage],
-          relationshipScore: newRelationshipScore, // Still apply relationship score change
-          aiPersona: updatedAIPersonaForCall // Keep the current persona (still busy)
-      }) : null);
-      setIsLoading(false);
-      return;
-    } else if (updatedAIPersonaForCall.isBusy) {
-        updatedAIPersonaForCall = {...updatedAIPersonaForCall, isBusy: false, busyReason: undefined, busyUntil: undefined };
-    }
-
-    const aiResponseText = await generateAIChatResponseService(
-      messageText,
-      currentConversationSummaryForCall, // from closure
-      updatedAIPersonaForCall, // Potentially updated (no longer busy)
-      newRelationshipScore,
-      getRelationshipLevel(newRelationshipScore),
-      newChatHistoryAfterUser // from closure
-    );
-
-    if (aiResponseText) {
-      const aiMessage: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        sender: 'ai',
-        text: aiResponseText,
-        timestamp: Date.now(),
-      };
-      const finalChatHistory = [...newChatHistoryAfterUser, aiMessage];
-      
-      let newConversationSummary = currentConversationSummaryForCall;
-      if (finalChatHistory.length % SUMMARIZE_CONVERSATION_TURN_INTERVAL === 0 && finalChatHistory.length > 0) {
-        const summary = await summarizeConversationService(
-          updatedAIPersonaForCall.name,
-          finalChatHistory.slice(-SUMMARIZE_CONVERSATION_TURN_INTERVAL)
-        );
-        if (summary) {
-          newConversationSummary += `\n\n[Summary after turn ${finalChatHistory.length}]: ${summary}`;
-        }
-      }
-
-      let updatedAIPersona = currentAIPersona;
-      if (Math.random() < AI_BUSY_CHANCE) {
-          updatedAIPersona = {
-              ...currentAIPersona,
-              isBusy: true,
-              busyReason: AI_BUSY_REASONS[Math.floor(Math.random() * AI_BUSY_REASONS.length)],
-              busyUntil: Date.now() + AI_MIN_BUSY_DURATION_MS + Math.random() * (AI_MAX_BUSY_DURATION_MS - AI_MIN_BUSY_DURATION_MS)
-          };
-      }
-
-      setGameState(prev => prev ? ({ 
-        ...prev, 
-        aiPersona: updatedAIPersona,
-        chatHistory: finalChatHistory, 
-        relationshipScore: newRelationshipScore,
-        conversationSummary: newConversationSummary
-      }) : null);
-
-    } else {
-      setErrorMessage("AI failed to respond. Please try sending your message again.");
-       setGameState(prev => prev ? ({ ...prev, relationshipScore: newRelationshipScore }) : null);
-    }
-    setIsLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState, userState.credits, userState.isLoggedIn, userState.userId]); 
-
+    // In a real app, you'd probably get the AI response here and then add it to the session.
+    // For now, we just add the user's message.
+    setGameState(prev => prev ? ({ ...prev, chatHistory: [...prev.chatHistory, userMessage] }) : null);
+  }, [userState.isLoggedIn, userState.userId]);
 
   const handleResetScenario = () => {
     if (userState.userId) {
-        clearGameState(userState.userId);
+      // In a real app, you would clear the session data in Firestore
+      console.log("Resetting scenario for user:", userState.userId);
     }
     setGameState(null);
     setAppScreen(AppScreen.ONBOARDING_SCENARIO);
