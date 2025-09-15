@@ -1,8 +1,5 @@
 # Echoes AI Friend
 
-**Version:** 1.0.0 (as per current file structure)
-**Last Updated:** (Current Date)
-
 ## 1. Project Overview
 
 Echoes AI Friend is an interactive chat application designed to simulate conversations with AI-driven personas. Users can select different scenarios and AI genders, leading to unique AI characters with distinct personalities, hobbies, and even secrets. The core gameplay revolves around building a relationship with the AI, managed through a scoring system influenced by user interactions. The application also features a credit system, differentiating between free and premium users, and offers mock purchases for additional credits.
