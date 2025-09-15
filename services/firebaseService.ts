@@ -3,7 +3,12 @@ import {
     setDoc,
     getDoc,
     deleteDoc,
-    enableIndexedDbPersistence // For offline capabilities
+    enableIndexedDbPersistence, // For offline capabilities
+    collection,
+    addDoc,
+    query,
+    getDocs,
+    orderBy
 } from 'firebase/firestore';
 import { db } from '../firebaseConfig'; // Adjust path as necessary
 import { UserState, GameState } from '../types'; // Adjust path as necessary
@@ -179,34 +184,105 @@ export const upsertUserProfileDocument = async (
   }
 };
 
-// === Stubbed functions from prompt ===
+// === New functions for Aura's data structure ===
 
-export const getUserData = async (userId: string): Promise<any> => {
-    console.log(`Getting user data for ${userId}`);
-    // This would typically fetch a user document from Firestore
-    return Promise.resolve({ message: "User data placeholder" });
+const SESSIONS_COLLECTION = 'sessions';
+const MESSAGES_COLLECTION = 'messages';
+
+/**
+ * Retrieves a user's document.
+ * @param userId The user's unique Firebase ID.
+ * @returns The user's data or null if not found.
+ */
+export const getUserData = async (userId: string): Promise<any | null> => {
+  if (!userId) return null;
+  try {
+    const docRef = doc(db, USERS_COLLECTION, userId);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      console.log(`User data loaded for user ${userId}`);
+      return docSnap.data();
+    } else {
+      console.log(`No user data found for user ${userId}`);
+      return null;
+    }
+  } catch (error) {
+    console.error(`Error loading user data for user ${userId}:`, error);
+    throw error;
+  }
 };
 
+/**
+ * Creates a new user document.
+ * @param userId The user's unique Firebase ID.
+ * @param initialData The initial data for the user.
+ */
 export const createUserData = async (userId: string, initialData: any): Promise<void> => {
-    console.log(`Creating user data for ${userId} with data:`, initialData);
-    // This would typically create a new user document in Firestore
-    return Promise.resolve();
+  if (!userId) throw new Error("User ID is required to create user data.");
+  try {
+    await setDoc(doc(db, USERS_COLLECTION, userId), initialData);
+    console.log(`User data created for user ${userId}`);
+  } catch (error) {
+    console.error(`Error creating user data for user ${userId}:`, error);
+    throw error;
+  }
 };
 
-export const getSessionData = async (userId: string, sessionId: string): Promise<any> => {
-    console.log(`Getting session ${sessionId} data for user ${userId}`);
-    // This would fetch a session sub-collection document
-    return Promise.resolve({ message: "Session data placeholder" });
+/**
+ * Retrieves all sessions for a user, ordered by creation date.
+ * @param userId The user's unique Firebase ID.
+ * @returns An array of session documents.
+ */
+export const getSessionData = async (userId: string): Promise<any[]> => {
+    if (!userId) throw new Error("User ID is required to get sessions.");
+    try {
+        const sessionsRef = collection(db, USERS_COLLECTION, userId, SESSIONS_COLLECTION);
+        const q = query(sessionsRef, orderBy("createdAt", "desc")); // Assuming sessions have a 'createdAt' field
+        const querySnapshot = await getDocs(q);
+        const sessions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        console.log(`Retrieved ${sessions.length} sessions for user ${userId}`);
+        return sessions;
+    } catch (error) {
+        console.error(`Error getting sessions for user ${userId}:`, error);
+        throw error;
+    }
 };
 
+
+/**
+ * Saves or updates a session document.
+ * @param userId The user's unique Firebase ID.
+ * @param sessionId The session's unique ID.
+ * @param data The data to save to the session.
+ */
 export const saveSessionData = async (userId: string, sessionId: string, data: any): Promise<void> => {
-    console.log(`Saving session ${sessionId} data for user ${userId} with data:`, data);
-    // This would save a session sub-collection document
-    return Promise.resolve();
+  if (!userId || !sessionId) throw new Error("User ID and Session ID are required.");
+  try {
+    const sessionRef = doc(db, USERS_COLLECTION, userId, SESSIONS_COLLECTION, sessionId);
+    await setDoc(sessionRef, data, { merge: true });
+    console.log(`Session ${sessionId} saved for user ${userId}`);
+  } catch (error) {
+    console.error(`Error saving session ${sessionId} for user ${userId}:`, error);
+    throw error;
+  }
 };
 
-export const addMessageToSession = async (userId: string, sessionId: string, message: any): Promise<void> => {
-    console.log(`Adding message to session ${sessionId} for user ${userId}:`, message);
-    // This would add a message to a messages sub-collection within a session
-    return Promise.resolve();
+/**
+ * Adds a new message to a session's message sub-collection.
+ * @param userId The user's unique Firebase ID.
+ * @param sessionId The session's unique ID.
+ * @param message The message object to add.
+ * @returns The ID of the newly created message document.
+ */
+export const addMessageToSession = async (userId: string, sessionId: string, message: any): Promise<string> => {
+  if (!userId || !sessionId) throw new Error("User ID and Session ID are required.");
+  try {
+    const messagesRef = collection(db, USERS_COLLECTION, userId, SESSIONS_COLLECTION, sessionId, MESSAGES_COLLECTION);
+    const docRef = await addDoc(messagesRef, message);
+    console.log(`Message added to session ${sessionId} with ID: ${docRef.id}`);
+    return docRef.id;
+  } catch (error) {
+    console.error(`Error adding message to session ${sessionId}:`, error);
+    throw error;
+  }
 };
