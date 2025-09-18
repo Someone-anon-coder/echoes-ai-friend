@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { onAuthStateChanged, signInAnonymously, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { auth } from './firebaseConfig';
 import {
   AppScreen,
@@ -8,7 +8,7 @@ import {
   Journey,
   ChatMessage,
 } from './types';
-import { INITIAL_RELATIONSHIP_SCORE, JOURNEY_DEFINITIONS } from './constants';
+import { JOURNEY_DEFINITIONS } from './constants';
 import {
   getUserProfile,
   createUserProfile,
@@ -26,39 +26,17 @@ import { MoodLog } from './types';
 import Header from './components/Header';
 import JourneySelectionView from './components/JourneySelectionView';
 import ChatView from './components/ChatView';
-import GameOverView from './components/GameOverView';
 import LoadingSpinner from './components/LoadingSpinner';
-import ProfileView from './components/ProfileView';
-import ShopView from './components/ShopView';
-import PaymentModal from './components/PaymentModal';
 import LoginView from './components/LoginView';
 
 const App: React.FC = () => {
-  const [appScreen, setAppScreenInternal] = useState<AppScreen>(AppScreen.LOGIN);
-  const [previousScreenBeforeMenu, setPreviousScreenBeforeMenu] = useState<AppScreen>(AppScreen.LOGIN);
+  const [appScreen, setAppScreen] = useState<AppScreen>(AppScreen.LOGIN);
   const [userState, setUserState] = useState<UserState | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-
-  // For Shop Payment Modal
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [selectedPackage, setSelectedPackage] = useState<{credits: number, name: string} | null>(null);
-
-  const setAppScreen = (targetScreen: AppScreen) => {
-    const currentScreen = appScreen;
-    if (currentScreen !== targetScreen) {
-      const targetIsMenuScreen = targetScreen === AppScreen.PROFILE || targetScreen === AppScreen.SHOP;
-      if (targetIsMenuScreen &&
-          currentScreen !== AppScreen.PROFILE &&
-          currentScreen !== AppScreen.SHOP) {
-        setPreviousScreenBeforeMenu(currentScreen);
-      }
-    }
-    setAppScreenInternal(targetScreen);
-  };
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
@@ -70,7 +48,6 @@ const App: React.FC = () => {
       if (credential) {
         setAccessToken(credential.accessToken || null);
       }
-      // The onAuthStateChanged listener will handle the user state update
       setAppScreen(AppScreen.ONBOARDING_SCENARIO);
     } catch (error) {
       console.error("Google sign-in failed:", error);
@@ -80,13 +57,11 @@ const App: React.FC = () => {
     }
   };
 
-  // Main effect for handling authentication state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setCurrentUserId(user.uid);
       } else {
-        // No user is signed in, so we show the login screen.
         setCurrentUserId(null);
         setAppScreen(AppScreen.LOGIN);
         setIsLoading(false);
@@ -95,26 +70,22 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Effect for fetching user data and loading session
   useEffect(() => {
     if (!currentUserId) return;
 
     const hydrateState = async () => {
       setIsLoading(true);
       try {
-        // Load User Profile
         let userProfile = await getUserProfile(currentUserId);
         if (!userProfile) {
           await createUserProfile(currentUserId);
           userProfile = await getUserProfile(currentUserId);
         }
-        // Ensure moodHistory is initialized
         if (userProfile && !userProfile.moodHistory) {
           userProfile.moodHistory = [];
         }
         setUserState(userProfile);
 
-        // Load Active Session
         const activeSession = await getActiveSession(currentUserId);
         if (activeSession) {
           setGameState(activeSession);
@@ -125,7 +96,6 @@ const App: React.FC = () => {
       } catch (error) {
         console.error("Error hydrating state:", error);
         setErrorMessage("Could not load your profile or session.");
-        setIsLoading(false);
       } finally {
         setIsLoading(false);
       }
@@ -145,10 +115,10 @@ const App: React.FC = () => {
     const journeyDefinition = JOURNEY_DEFINITIONS.find(j => j.id === journey.id);
     if (!journeyDefinition) {
       setErrorMessage("Selected journey not found.");
+      setIsLoading(false);
       return;
     }
 
-    // Generate a persona based on the journey's context (optional, can be simplified)
     const persona = await generateAIPersonaService({ name: journey.name, description: journey.description, isPremium: false, id: journey.id }, accessToken);
 
     if (persona) {
@@ -161,11 +131,8 @@ const App: React.FC = () => {
       };
 
       const newGameState: GameState = {
-        currentScenario: null, // Or you can adapt this to hold journey info
         aiPersona: persona,
-        relationshipScore: INITIAL_RELATIONSHIP_SCORE,
         chatHistory: [firstMessage],
-        conversationSummary: "",
         activeJourneyId: journey.id,
         currentJourneyStepId: 0
       };
@@ -197,7 +164,7 @@ const App: React.FC = () => {
     }
 
     let updatedGameState = { ...currentGameState };
-    let nextStepIndex = updatedGameState.currentJourneyStepId + 1;
+    let nextStepIndex = updatedGameState.currentJourneyStepId! + 1;
 
     while (journey.steps[nextStepIndex] && journey.steps[nextStepIndex].type === 'PROMPT') {
       const nextStep = journey.steps[nextStepIndex];
@@ -212,7 +179,6 @@ const App: React.FC = () => {
       nextStepIndex++;
     }
 
-    // Check if the journey is over AFTER the loop
     if (!journey.steps[nextStepIndex]) {
       const concludingMessage: ChatMessage = {
         id: `system-journey-complete-${Date.now()}`,
@@ -224,7 +190,6 @@ const App: React.FC = () => {
       updatedGameState.activeJourneyId = undefined;
       updatedGameState.currentJourneyStepId = undefined;
     } else {
-        // If the journey is not over, the next step must be a USER_INPUT, so we update the step counter
         updatedGameState.currentJourneyStepId = nextStepIndex;
     }
 
@@ -237,13 +202,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // 1. Create the user message and update state immediately for responsiveness
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       sender: 'user',
       text: messageText,
       timestamp: Date.now(),
-      moodAnalysis: undefined, // Placeholder
     };
 
     const tempGameState = {
@@ -252,13 +215,11 @@ const App: React.FC = () => {
     };
     setGameState(tempGameState);
 
-    // Journey Mode vs. Free-Chat Mode
     if (gameState.activeJourneyId && gameState.currentJourneyStepId !== undefined) {
       const advancedState = advanceJourney(tempGameState);
       setGameState(advancedState);
       await saveSession(currentUserId, advancedState);
     } else {
-      // Free-Chat Mode Logic (existing logic)
       const moodAnalysis = await analyzeSentimentForRelationshipUpdateService(messageText, accessToken);
       if (moodAnalysis) {
         userMessage.moodAnalysis = moodAnalysis;
@@ -266,7 +227,7 @@ const App: React.FC = () => {
 
       const aiResponseText = await generateAIChatResponseService(
           messageText,
-          gameState.conversationSummary,
+          "", // No conversation summary
           gameState.aiPersona,
           tempGameState.chatHistory,
           accessToken
@@ -293,11 +254,8 @@ const App: React.FC = () => {
   const handleResetScenario = async () => {
     if (!currentUserId) return;
     const newGameState: GameState = {
-      currentScenario: null,
       aiPersona: null,
-      relationshipScore: INITIAL_RELATIONSHIP_SCORE,
       chatHistory: [],
-      conversationSummary: "",
       activeJourneyId: undefined,
       currentJourneyStepId: undefined,
     };
@@ -305,37 +263,6 @@ const App: React.FC = () => {
     await saveSession(currentUserId, newGameState);
     setAppScreen(AppScreen.ONBOARDING_SCENARIO);
     setErrorMessage(null);
-  };
-
-  const handleNavigateBackFromMenu = () => {
-    if (gameState && gameState.currentScenario && gameState.aiPersona) {
-      setAppScreen(AppScreen.CHATTING);
-    } else {
-      setAppScreen(previousScreenBeforeMenu || AppScreen.ONBOARDING_SCENARIO);
-    }
-  };
-
-  const handleTogglePremium = async () => {
-    if (!currentUserId || !userState) return;
-    const newPremiumStatus = !userState.isPremium;
-    const updatedUserState = { ...userState, isPremium: newPremiumStatus };
-    setUserState(updatedUserState);
-    await updateUserProfile(currentUserId, updatedUserState);
-  };
-
-  // Shop related handlers
-  const handleInitiatePurchase = (credits: number, name: string) => {
-    setSelectedPackage({ credits, name });
-    setIsPaymentModalOpen(true);
-  };
-
-  const handleConfirmPurchase = async (creditsToAward: number) => {
-    if (!currentUserId || !userState) return;
-    const newCredits = userState.credits + creditsToAward;
-    setUserState({ ...userState, credits: newCredits });
-    await updateUserProfile(currentUserId, { ...userState, credits: newCredits });
-    setIsPaymentModalOpen(false);
-    setSelectedPackage(null);
   };
 
   const handleLogMood = async (mood: number) => {
@@ -358,7 +285,7 @@ const App: React.FC = () => {
       case AppScreen.LOGIN:
         return <LoginView onGoogleSignIn={handleGoogleSignIn} isLoading={isLoading} />;
       case AppScreen.ONBOARDING_SCENARIO:
-        if (!userState) return <LoadingSpinner />; // Should be handled by main isLoading, but as a fallback
+        if (!userState) return <LoadingSpinner />;
         return <JourneySelectionView userState={userState} onJourneySelect={handleJourneySelect} isLoading={isLoading} />;
       case AppScreen.CHATTING:
         if (!gameState || !gameState.aiPersona || !userState) {
@@ -376,14 +303,6 @@ const App: React.FC = () => {
             initialSystemMessage={gameState.aiPersona.initialSystemMessage}
           />
         );
-      case AppScreen.GAME_OVER:
-        return <GameOverView aiPersona={gameState?.aiPersona || null} onReset={handleResetScenario} />;
-      case AppScreen.PROFILE:
-        if (!userState) return null;
-        return <ProfileView userState={userState} onTogglePremium={handleTogglePremium} onBack={handleNavigateBackFromMenu} />;
-      case AppScreen.SHOP:
-        if (!userState) return null;
-        return <ShopView userState={userState} onInitiatePurchase={handleInitiatePurchase} onBack={handleNavigateBackFromMenu} />;
       default:
         setAppScreen(AppScreen.ONBOARDING_SCENARIO);
         return <div className="text-center p-5 dark:text-white">Unknown screen state. Redirecting...</div>;
@@ -398,10 +317,7 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-gray-100 dark:bg-gray-900">
       <Header
         userState={userState}
-        gameState={gameState}
         onResetScenario={handleResetScenario}
-        currentScreen={appScreen}
-        navigateTo={setAppScreen}
       />
       <main className="flex-grow container mx-auto w-full max-w-4xl px-2 sm:px-4">
         {errorMessage && (
@@ -411,14 +327,8 @@ const App: React.FC = () => {
         )}
         {renderScreen()}
       </main>
-      <PaymentModal 
-        isOpen={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        onConfirmPurchase={handleConfirmPurchase}
-        item={selectedPackage}
-      />
       <footer className="text-center p-4 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700 mt-auto">
-        Echoes AI Friend © {new Date().getFullYear()}
+        Aura © {new Date().getFullYear()}
       </footer>
     </div>
   );
