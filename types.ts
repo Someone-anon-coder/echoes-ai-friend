@@ -1,7 +1,6 @@
 
 export enum AppScreen {
   LOGIN, // New screen for user login
-  API_KEY_ENTRY,
   ONBOARDING_SCENARIO,
   CHATTING,
   GAME_OVER,

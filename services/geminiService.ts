@@ -2,21 +2,11 @@ import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 import { Scenario, AIPersona, ChatMessage, MoodAnalysis } from '../types';
 import { GEMINI_API_MODEL_TEXT } from '../constants';
 
-let genAI: GoogleGenerativeAI | null = null;
-
-const initializeGeminiClient = (apiKey: string) => {
-  if (!apiKey) {
-    throw new Error("API key is required to initialize Gemini client.");
-  }
-  if (!genAI) {
-    genAI = new GoogleGenerativeAI(apiKey);
-  }
-  return genAI;
-};
-
-const getGenerativeModel = (apiKey: string): GenerativeModel => {
-  const client = initializeGeminiClient(apiKey);
-  return client.getGenerativeModel({ model: GEMINI_API_MODEL_TEXT });
+const getGenerativeModel = (token: string): GenerativeModel => {
+  const genAI = new GoogleGenerativeAI({
+    oauthToken: token,
+  } as any);
+  return genAI.getGenerativeModel({ model: GEMINI_API_MODEL_TEXT });
 };
 
 const parseJsonFromGeminiResponse = <T,>(textResponse: string): T | null => {
@@ -34,8 +24,8 @@ const parseJsonFromGeminiResponse = <T,>(textResponse: string): T | null => {
   }
 };
 
-export const generateAIPersonaService = async (journey: Scenario, apiKey: string): Promise<AIPersona | null> => {
-  const model = getGenerativeModel(apiKey);
+export const generateAIPersonaService = async (journey: Scenario, token: string): Promise<AIPersona | null> => {
+  const model = getGenerativeModel(token);
   const prompt = `
     You are creating the persona for "Aura," a virtual wellness companion for a mobile app.
     The user has selected the following "Wellness Journey" to begin their conversation:
@@ -81,9 +71,9 @@ export const generateAIPersonaService = async (journey: Scenario, apiKey: string
 
 export const analyzeSentimentForRelationshipUpdateService = async (
   userMessage: string,
-  apiKey: string
+  token: string
 ): Promise<MoodAnalysis | null> => {
-  const model = getGenerativeModel(apiKey);
+  const model = getGenerativeModel(token);
   const prompt = `
     Analyze the user's message and return a valid JSON object with the following structure:
     {"sentiment": "Positive" | "Negative" | "Neutral", "primaryEmotion": string, "confidenceScore": number}
@@ -113,9 +103,9 @@ export const generateAIChatResponseService = async (
   conversationSummary: string,
   aiPersona: AIPersona,
   recentChatHistory: ChatMessage[],
-  apiKey: string
+  token: string
 ): Promise<string | null> => {
-  const model = getGenerativeModel(apiKey);
+  const model = getGenerativeModel(token);
 
   // Create a summary of recent moods
   const recentMoods = recentChatHistory
