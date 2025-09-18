@@ -43,7 +43,6 @@ export const callGemini = functions.https.onCall(async (data, context) => {
   }
 
   const { task, params } = data;
-  console.log(`Received task: ${task} for user: ${context.auth.uid}`);
 
   try {
     const modelName = params.model || 'gemini-pro';

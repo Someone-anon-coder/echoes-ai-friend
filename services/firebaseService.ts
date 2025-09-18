@@ -18,7 +18,6 @@ import { FREE_USER_INITIAL_CREDITS, PREMIUM_USER_DAILY_CREDITS, FREE_USER_DAILY_
 // Enable offline persistence for Firestore.
 // Handling potential errors during enablePersistence is important for production.
 enableIndexedDbPersistence(db)
-  .then(() => console.log("Firestore offline persistence enabled."))
   .catch((err) => {
     if (err.code === 'failed-precondition') {
       // Multiple tabs open, persistence can only be enabled in one tab at a time.
@@ -41,7 +40,6 @@ export const saveUserStateToFirestore = async (userId: string, userState: UserSt
   if (!userId) throw new Error("User ID is required to save user state.");
   try {
     await setDoc(doc(db, USERS_COLLECTION, userId), userState, { merge: true }); // Use merge:true to avoid overwriting fields unintentionally
-    console.log(`UserState saved for user ${userId}`);
   } catch (error) {
     console.error(`Error saving UserState for user ${userId}:`, error);
     throw error; // Re-throw to allow calling function to handle
@@ -54,10 +52,8 @@ export const loadUserStateFromFirestore = async (userId: string): Promise<UserSt
     const docRef = doc(db, USERS_COLLECTION, userId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      console.log(`UserState loaded for user ${userId}`);
       return docSnap.data() as UserState;
     } else {
-      console.log(`No UserState found for user ${userId}`);
       return null;
     }
   } catch (error) {
@@ -70,7 +66,6 @@ export const deleteUserStateFromFirestore = async (userId: string): Promise<void
     if (!userId) return; // Or throw error
     try {
         await deleteDoc(doc(db, USERS_COLLECTION, userId));
-        console.log(`UserState deleted for user ${userId}`);
     } catch (error) {
         console.error(`Error deleting UserState for user ${userId}:`, error);
         throw error;
@@ -83,7 +78,6 @@ export const saveGameStateToFirestore = async (userId: string, gameState: GameSt
   if (!userId) throw new Error("User ID is required to save game state.");
   try {
     await setDoc(doc(db, USERS_COLLECTION, userId, GAMES_COLLECTION, 'activeGame'), gameState);
-    console.log(`GameState saved for user ${userId}`);
   } catch (error) {
     console.error(`Error saving GameState for user ${userId}:`, error);
     throw error;
@@ -96,10 +90,8 @@ export const loadGameStateFromFirestore = async (userId: string): Promise<GameSt
     const docRef = doc(db, USERS_COLLECTION, userId, GAMES_COLLECTION, 'activeGame');
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      console.log(`GameState loaded for user ${userId}`);
       return docSnap.data() as GameState;
     } else {
-      console.log(`No active GameState found for user ${userId}`);
       return null;
     }
   } catch (error) {
@@ -112,7 +104,6 @@ export const deleteGameStateFromFirestore = async (userId: string): Promise<void
     if (!userId) return;
     try {
         await deleteDoc(doc(db, USERS_COLLECTION, userId, GAMES_COLLECTION, 'activeGame'));
-        console.log(`Active GameState deleted for user ${userId}`);
     } catch (error) {
         console.error(`Error deleting active GameState for user ${userId}:`, error);
         throw error;
@@ -148,7 +139,6 @@ export const upsertUserProfileDocument = async (
     };
     try {
       await setDoc(userRef, newUserState);
-      console.log("New user profile created in Firestore:", firebaseUser.uid);
       return newUserState;
     } catch (error) {
       console.error("Error creating user profile document:", error);
@@ -175,7 +165,6 @@ export const upsertUserProfileDocument = async (
 
     try {
       await setDoc(userRef, updatedData, { merge: true });
-      console.log("User profile updated in Firestore:", firebaseUser.uid, "Credits added:", creditsToAdd);
       return { ...existingData, ...updatedData };
     } catch (error) {
       console.error("Error updating user profile document:", error);
@@ -200,10 +189,8 @@ export const getUserData = async (userId: string): Promise<any | null> => {
     const docRef = doc(db, USERS_COLLECTION, userId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      console.log(`User data loaded for user ${userId}`);
       return docSnap.data();
     } else {
-      console.log(`No user data found for user ${userId}`);
       return null;
     }
   } catch (error) {
@@ -221,7 +208,6 @@ export const createUserData = async (userId: string, initialData: any): Promise<
   if (!userId) throw new Error("User ID is required to create user data.");
   try {
     await setDoc(doc(db, USERS_COLLECTION, userId), initialData);
-    console.log(`User data created for user ${userId}`);
   } catch (error) {
     console.error(`Error creating user data for user ${userId}:`, error);
     throw error;
@@ -240,7 +226,6 @@ export const getSessionData = async (userId: string): Promise<any[]> => {
         const q = query(sessionsRef, orderBy("createdAt", "desc")); // Assuming sessions have a 'createdAt' field
         const querySnapshot = await getDocs(q);
         const sessions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        console.log(`Retrieved ${sessions.length} sessions for user ${userId}`);
         return sessions;
     } catch (error) {
         console.error(`Error getting sessions for user ${userId}:`, error);
@@ -260,7 +245,6 @@ export const saveSessionData = async (userId: string, sessionId: string, data: a
   try {
     const sessionRef = doc(db, USERS_COLLECTION, userId, SESSIONS_COLLECTION, sessionId);
     await setDoc(sessionRef, data, { merge: true });
-    console.log(`Session ${sessionId} saved for user ${userId}`);
   } catch (error) {
     console.error(`Error saving session ${sessionId} for user ${userId}:`, error);
     throw error;
@@ -279,7 +263,6 @@ export const addMessageToSession = async (userId: string, sessionId: string, mes
   try {
     const messagesRef = collection(db, USERS_COLLECTION, userId, SESSIONS_COLLECTION, sessionId, MESSAGES_COLLECTION);
     const docRef = await addDoc(messagesRef, message);
-    console.log(`Message added to session ${sessionId} with ID: ${docRef.id}`);
     return docRef.id;
   } catch (error) {
     console.error(`Error adding message to session ${sessionId}:`, error);
