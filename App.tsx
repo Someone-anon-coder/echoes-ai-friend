@@ -125,6 +125,7 @@ const App: React.FC = () => {
       } catch (error) {
         console.error("Error hydrating state:", error);
         setErrorMessage("Could not load your profile or session.");
+        setIsLoading(false);
       } finally {
         setIsLoading(false);
       }
