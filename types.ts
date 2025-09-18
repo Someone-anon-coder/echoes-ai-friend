@@ -42,10 +42,10 @@ export interface UserState {
   credits: number;
   isPremium: boolean;
   premiumExpiryDate?: string | null; // ISO date string, for subscriptions
-  lastLoginDate: string | null; // ISO date string for daily credit refresh
+  lastLoginDate?: string | null; // ISO date string for daily credit refresh
   email?: string; // From Firebase Auth
   displayName?: string; // From Firebase Auth
-  createdAt?: string; // ISO date string for when the user profile was created in Firestore
+  createdAt: any; // Can be FieldValue on create, Timestamp on read
   // To store active subscription tokens/IDs from Google Play for validation with backend
   activeSubscription?: { // Assuming one primary subscription type for "isPremium"
     productId: string; // e.g., "premium_monthly_echoes"
