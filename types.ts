@@ -28,6 +28,11 @@ export interface AIPersona {
   busyUntil?: number; // Timestamp
 }
 
+export interface MoodLog {
+  date: string; // ISO date string (e.g., "2023-10-27")
+  mood: number; // 1-5 rating
+}
+
 export interface UserState {
   userId: string | null;
   isLoggedIn: boolean;
@@ -35,6 +40,7 @@ export interface UserState {
   isPremium: boolean;
   premiumExpiryDate?: string | null; // ISO date string, for subscriptions
   lastLoginDate?: string | null; // ISO date string for daily credit refresh
+  moodHistory: MoodLog[];
   email?: string; // From Firebase Auth
   displayName?: string; // From Firebase Auth
   createdAt: any; // Can be FieldValue on create, Timestamp on read

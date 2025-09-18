@@ -3,22 +3,26 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChatMessage, AIPersona, UserState } from '../types';
 import MessageDisplay from './MessageDisplay';
 import LoadingSpinner from './LoadingSpinner';
+import MoodLogger from './MoodLogger';
+import MoodChart from './MoodChart';
 
 interface ChatViewProps {
   userState: UserState;
   aiPersona: AIPersona;
   chatHistory: ChatMessage[];
-  onSendMessage: (messageText: string) => Promise<void>; 
-  isLoading: boolean; 
+  onSendMessage: (messageText: string) => Promise<void>;
+  onLogMood: (mood: number) => void;
+  isLoading: boolean;
   initialSystemMessage?: string;
   // firstAIMessage prop is no longer passed or used
 }
 
-const ChatView: React.FC<ChatViewProps> = ({ 
-  userState, 
-  aiPersona, 
-  chatHistory, 
-  onSendMessage, 
+const ChatView: React.FC<ChatViewProps> = ({
+  userState,
+  aiPersona,
+  chatHistory,
+  onSendMessage,
+  onLogMood,
   isLoading,
   initialSystemMessage,
 }) => {
@@ -70,6 +74,10 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)] bg-gradient-to-br from-gray-100 to-blue-50 dark:from-gray-800 dark:to-blue-900"> {/* Adjusted height for header */}
+      <div className="p-4 border-b border-gray-300 dark:border-gray-700">
+        <MoodLogger onLogMood={onLogMood} moodHistory={userState.moodHistory} />
+        <MoodChart moodHistory={userState.moodHistory} />
+      </div>
       <div className="flex-grow overflow-y-auto p-4 md:p-6 space-y-2">
         {localChatHistory.map((msg) => (
           <MessageDisplay key={msg.id} message={msg} aiName={aiPersona.name} />
