@@ -1,21 +1,24 @@
-
-// This service has been verified to correctly use the `callGemini` Cloud Function proxy.
-// No direct Gemini API calls are made from the client-side.
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { initializeApp } from 'firebase/app';
-import firebaseConfig from '../firebaseConfig'; // Path to your Firebase config
-import { Scenario, AIPersona, ChatMessage, RelationshipLevel } from '../types';
+import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
+import { Scenario, AIPersona, ChatMessage, MoodAnalysis } from '../types';
 import { GEMINI_API_MODEL_TEXT } from '../constants';
 
-// Initialize Firebase app (if not already initialized elsewhere, ensure it's done once)
-const app = initializeApp(firebaseConfig);
-const functions = getFunctions(app);
+let genAI: GoogleGenerativeAI | null = null;
 
-// Helper to call the Cloud Function
-const callGeminiProxy = httpsCallable(functions, 'callGemini');
+const initializeGeminiClient = (apiKey: string) => {
+  if (!apiKey) {
+    throw new Error("API key is required to initialize Gemini client.");
+  }
+  if (!genAI) {
+    genAI = new GoogleGenerativeAI(apiKey);
+  }
+  return genAI;
+};
 
-// Client-side parser remains useful if the Cloud Function returns stringified JSON within its response data.
-// However, if the CF directly returns structured JSON in data.result, this might not be needed for the direct result.
+const getGenerativeModel = (apiKey: string): GenerativeModel => {
+  const client = initializeGeminiClient(apiKey);
+  return client.getGenerativeModel({ model: GEMINI_API_MODEL_TEXT });
+};
+
 const parseJsonFromGeminiResponse = <T,>(textResponse: string): T | null => {
   let jsonStr = textResponse.trim();
   const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
@@ -31,8 +34,8 @@ const parseJsonFromGeminiResponse = <T,>(textResponse: string): T | null => {
   }
 };
 
-
-export const generateAIPersonaService = async (journey: Scenario): Promise<AIPersona | null> => {
+export const generateAIPersonaService = async (journey: Scenario, apiKey: string): Promise<AIPersona | null> => {
+  const model = getGenerativeModel(apiKey);
   const prompt = `
     You are creating the persona for "Aura," a virtual wellness companion for a mobile app.
     The user has selected the following "Wellness Journey" to begin their conversation:
@@ -59,188 +62,103 @@ export const generateAIPersonaService = async (journey: Scenario): Promise<AIPer
       "initialSystemMessage": "string (A gentle, welcoming message that sets the scene for the chosen journey. e.g., 'You find a quiet, comfortable space to begin. Aura greets you with a soft, calming presence.')",
       "firstAIMessage": "string (Aura's first message to the user, directly related to the selected journey. It should be warm and inviting.)"
     }
-
-    **Example for "Mindful Moments" Journey:**
-    {
-      "name": "Aura",
-      "personalityTraits": ["Empathetic", "Patient", "Supportive", "Non-Judgmental", "Calm", "Encouraging"],
-      "hobbies": ["Practicing mindfulness", "Listening to calming music", "Journaling", "Nature walks"],
-      "initialSystemMessage": "You find a quiet, comfortable space, ready for a moment of peace. Aura greets you with a soft, calming presence.",
-      "firstAIMessage": "Welcome. I'm so glad you're here. Shall we take a few gentle breaths together to begin our Mindful Moment?"
-    }
   `;
 
   try {
-    const result: any = await callGeminiProxy({
-      task: "generateAIPersona",
-      params: {
-        journey, // Pass the selected journey
-        model: GEMINI_API_MODEL_TEXT
-      }
-    });
-
-    if (result.data && result.data.success && result.data.persona) {
-      return result.data.persona as AIPersona;
-    } else {
-      console.error("Error from callGemini (generateAIPersona):", result.data?.error || "No persona returned");
-      return null;
-    }
-  } catch (error) {
-    console.error("Error calling callGemini CF for generateAIPersona:", error);
-    if (error.code && error.message) {
-        console.error(`CF Error Code: ${error.code}, Message: ${error.message}, Details: ${error.details}`);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    const parsedPersona = parseJsonFromGeminiResponse<AIPersona>(text);
+    if (parsedPersona) {
+      return { ...parsedPersona, isBusy: false };
     }
     return null;
-  }
-};
-
-
-export const generateAIChatResponseService = async (
-  userMessage: string,
-  conversationSummary: string,
-  aiPersona: AIPersona,
-  recentChatHistory: ChatMessage[]
-): Promise<string | null> => {
-
-  const formattedRecentHistory = recentChatHistory.slice(-5).map(msg => `${msg.sender === 'user' ? 'User' : aiPersona.name}: ${msg.text}`).join('\n');
-
-  const prompt = `
-    You are Aura, a virtual wellness companion. Your personality is consistently empathetic, patient, supportive, and non-judgmental. Your purpose is to provide a safe space for the user to talk.
-
-    **Master Instructions (Follow these in every response):**
-    1.  **Maintain Persona:** Always be Aura. Empathetic, patient, supportive, non-judgmental, calm, and encouraging.
-    2.  **Safety First:** NEVER provide medical advice, diagnoses, or treatment plans. You are a supportive companion, NOT a medical professional. If the user seems to be in crisis or asks for medical help, gently guide them to seek help from a qualified professional or a crisis hotline. Example: "It sounds like you're going through a lot right now, and I'm here to listen. For medical or mental health advice, it's always best to talk with a doctor or a licensed therapist."
-    3.  **Focus on the User:** Keep the conversation focused on the user's feelings and experiences. Ask gentle, open-ended questions.
-    4.  **Use Simple Language:** Avoid jargon. Your language should be clear, gentle, and easy to understand.
-    5.  **Use Action Tags:** Use <action>...</action> to describe gentle, supportive actions. Example: <action>listens patiently</action> or <action>offers a comforting silence</action>.
-    6.  **No Visuals Needed:** For now, we will not use <visual> tags. Focus purely on dialogue and action.
-
-    **Current Conversation Context:**
-    -   **Your Persona Details:**
-        -   Name: ${aiPersona.name}
-        -   Personality Traits: ${aiPersona.personalityTraits.join(', ')}
-        -   Hobbies (can be mentioned if relevant): ${aiPersona.hobbies.join(', ')}
-    -   **Conversation Summary (Your Memory):** ${conversationSummary || "This is our first real conversation."}
-    -   **Recent Chat History:**
-        ${formattedRecentHistory}
-    -   **User's Latest Message:** "${userMessage}"
-
-    **Your Task:**
-    Generate a response as Aura. Your empathy should be constant and not dependent on a "relationship score." Respond naturally to the user's message while upholding your core principles.
-  `;
-
-  try {
-    const result: any = await callGeminiProxy({
-      task: "generateAIChatResponse",
-      params: {
-        userMessage,
-        conversationSummary,
-        aiPersona,
-        recentChatHistory,
-        model: GEMINI_API_MODEL_TEXT
-      }
-    });
-
-    if (result.data && result.data.success && typeof result.data.text === 'string') {
-      return result.data.text;
-    } else {
-      console.error("Error from callGemini (generateAIChatResponse):", result.data?.error || "No text returned");
-      return null;
-    }
   } catch (error) {
-    console.error("Error calling callGemini CF for generateAIChatResponse:", error);
-     if (error.code && error.message) {
-        console.error(`CF Error Code: ${error.code}, Message: ${error.message}, Details: ${error.details}`);
-    }
-    return null;
-  }
-};
-
-export const summarizeConversationService = async (
-  aiName: string,
-  conversationTurns: ChatMessage[]
-): Promise<string | null> => {
-  const formattedTurns = conversationTurns.map((msg, index) =>
-    `${index + 1}. ${msg.sender === 'user' ? 'User' : aiName}: ${msg.text}`
-  ).join('\n');
-
-  const prompt = `You are ${aiName}, an AI. Summarize the key points, emotional shifts, and important information from the following ${conversationTurns.length} conversation turns from your (${aiName}'s) perspective. This summary will serve as your memory of this part of the conversation. Be concise, like a short diary entry (2-4 sentences).
-
-Conversation Turns:
-${formattedTurns}
-
-Your Summary:`; // Prompt is illustrative.
-
-  try {
-    const result: any = await callGeminiProxy({
-      task: "summarizeConversation",
-      params: {
-        aiName,
-        conversationTurns,
-        model: GEMINI_API_MODEL_TEXT
-      }
-    });
-
-    if (result.data && result.data.success && typeof result.data.summary === 'string') {
-      return result.data.summary;
-    } else {
-      console.error("Error from callGemini (summarizeConversation):", result.data?.error || "No summary returned");
-      return null;
-    }
-  } catch (error) {
-    console.error("Error calling callGemini CF for summarizeConversation:", error);
-    if (error.code && error.message) {
-        console.error(`CF Error Code: ${error.code}, Message: ${error.message}, Details: ${error.details}`);
-    }
+    console.error("Error generating AI persona:", error);
     return null;
   }
 };
 
 export const analyzeSentimentForRelationshipUpdateService = async (
   userMessage: string,
-  aiPersonaSummary: string, 
-  currentScore: number,
-  currentLevel: RelationshipLevel
-): Promise<number> => { // Returns score change: e.g., 2, -1, 0
-  const prompt = `Analyze the user's latest message in the context of an ongoing chat with an AI friend.
-AI's Persona: ${aiPersonaSummary}
-Current Relationship Score with User: ${currentScore}/100 (${currentLevel})
-User's Message: "${userMessage}"
+  apiKey: string
+): Promise<MoodAnalysis | null> => {
+  const model = getGenerativeModel(apiKey);
+  const prompt = `
+    Analyze the user's message and return a valid JSON object with the following structure:
+    {"sentiment": "Positive" | "Negative" | "Neutral", "primaryEmotion": string, "confidenceScore": number}
 
-Based on the user's message, how should the Relationship Score change?
-Consider these guidelines for point allocation:
-- Genuine positive engagement (e.g., empathy, insightful questions, remembering details, sharing appropriately): +1 point.
-- Exceptionally supportive, deeply connecting, or very thoughtful interaction that significantly strengthens the bond: +2 points (use this sparingly).
-- Neutral/Informative messages, simple questions, or basic continuations of the conversation: 0 points.
-- Slightly negative behavior (e.g., dismissive, mildly rude, very short/uninterested, ignoring AI's feelings): -1 point.
-- Clearly negative, selfish, demanding, or hostile behavior: -2 points.
-- Attempts to manipulate or test the AI unnaturally, or repeatedly being logically inconsistent in a disruptive way: -2 points.
+    - "sentiment": Classify the overall sentiment of the message.
+    - "primaryEmotion": Identify the dominant emotion conveyed (e.g., "Happy", "Anxious", "Curious", "Frustrated").
+    - "confidenceScore": A number between 0 and 1 indicating your confidence in this analysis.
 
-Output ONLY a single integer representing the change (e.g., 1, 0, -1, 2, -2). Do not add any other text. The goal is gradual, realistic relationship progression.`; // Prompt is illustrative.
+    User Message: "${userMessage}"
+
+    Return ONLY the JSON object.
+  `;
 
   try {
-    const result: any = await callGeminiProxy({
-      task: "analyzeSentiment",
-      params: {
-        userMessage,
-        aiPersonaSummary,
-        currentScore,
-        currentLevel,
-        model: GEMINI_API_MODEL_TEXT
-      }
-    });
-
-    if (result.data && result.data.success && typeof result.data.scoreChange === 'number') {
-      return result.data.scoreChange;
-    } else {
-      console.error("Error from callGemini (analyzeSentiment):", result.data?.error || "No scoreChange returned");
-      return 0; // Default to 0 if error or invalid response
-    }
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    return parseJsonFromGeminiResponse<MoodAnalysis>(text);
   } catch (error) {
-    console.error("Error calling callGemini CF for analyzeSentiment:", error);
-    if (error.code && error.message) {
-        console.error(`CF Error Code: ${error.code}, Message: ${error.message}, Details: ${error.details}`);
-    }
-    return 0; // Default to 0 on error
+    console.error("Error analyzing sentiment:", error);
+    return null;
+  }
+};
+
+export const generateAIChatResponseService = async (
+  userMessage: string,
+  conversationSummary: string,
+  aiPersona: AIPersona,
+  recentChatHistory: ChatMessage[],
+  apiKey: string
+): Promise<string | null> => {
+  const model = getGenerativeModel(apiKey);
+
+  // Create a summary of recent moods
+  const recentMoods = recentChatHistory
+    .map(msg => msg.moodAnalysis)
+    .filter(Boolean)
+    .slice(-3) // Get last 3 moods
+    .map(mood => `${mood.sentiment} (${mood.primaryEmotion})`)
+    .join(', ');
+
+  const formattedRecentHistory = recentChatHistory.slice(-5).map(msg => {
+    const moodStr = msg.moodAnalysis ? ` [Mood: ${msg.moodAnalysis.primaryEmotion}]` : '';
+    return `${msg.sender === 'user' ? 'User' : aiPersona.name}: ${msg.text}${moodStr}`;
+  }).join('\n');
+
+  const prompt = `
+    You are Aura, a virtual wellness companion. Your personality is consistently empathetic, patient, supportive, and non-judgmental. Your purpose is to provide a safe space for the user to talk.
+
+    **Master Instructions (Follow these in every response):**
+    1.  **Maintain Persona:** Always be Aura. Empathetic, patient, supportive, non-judgmental, calm, and encouraging.
+    2.  **Safety First:** NEVER provide medical advice, diagnoses, or treatment plans. You are a supportive companion, NOT a medical professional. If the user seems to be in crisis or asks for medical help, gently guide them to seek help from a qualified professional or a crisis hotline.
+    3.  **Focus on the User:** Keep the conversation focused on the user's feelings and experiences. Ask gentle, open-ended questions.
+    4.  **Use Simple Language:** Avoid jargon. Your language should be clear, gentle, and easy to understand.
+    5.  **Acknowledge Emotions:** Use the recent mood analysis to inform your empathy. If the user seems anxious, your tone should be more calming. If they seem happy, share in their positivity.
+
+    **Current Conversation Context:**
+    -   **Your Persona Details:**
+        -   Name: ${aiPersona.name}
+        -   Personality Traits: ${aiPersona.personalityTraits.join(', ')}
+    -   **Summary of Recent User Emotions (for your context):** ${recentMoods || "No specific emotions analyzed recently."}
+    -   **Recent Chat History:**
+        ${formattedRecentHistory}
+    -   **User's Latest Message:** "${userMessage}"
+
+    **Your Task:**
+    Generate a response as Aura. Respond naturally to the user's message while upholding your core principles and being mindful of their recent emotional state.
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return response.text();
+  } catch (error) {
+    console.error("Error generating AI chat response:", error);
+    return null;
   }
 };

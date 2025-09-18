@@ -1,6 +1,7 @@
 
 export enum AppScreen {
   LOGIN, // New screen for user login
+  API_KEY_ENTRY,
   ONBOARDING_SCENARIO,
   CHATTING,
   GAME_OVER,
@@ -56,11 +57,18 @@ export interface UserState {
   };
 }
 
+export interface MoodAnalysis {
+  sentiment: "Positive" | "Negative" | "Neutral";
+  primaryEmotion: string;
+  confidenceScore: number;
+}
+
 export interface ChatMessage {
-  id: string;
+  id:string;
   sender: "user" | "ai" | "system";
   text: string;
   timestamp: number;
+  moodAnalysis?: MoodAnalysis;
   // For AI state when message was sent, if applicable
   aiStatus?: 'available' | 'busy';
 }

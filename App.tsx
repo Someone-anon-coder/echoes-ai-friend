@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import { auth } from './firebaseConfig';
@@ -7,13 +6,9 @@ import {
   UserState,
   GameState,
   Scenario,
-  AIPersona,
   ChatMessage,
 } from './types';
-import {
-  INITIAL_RELATIONSHIP_SCORE,
-  // FREE_USER_INITIAL_CREDITS, // This is now managed in firestoreService
-} from './constants';
+import { INITIAL_RELATIONSHIP_SCORE } from './constants';
 import {
   getUserProfile,
   createUserProfile,
@@ -23,9 +18,8 @@ import {
 } from './services/firestoreService';
 import {
   generateAIPersonaService,
-  // generateAIChatResponseService, // Assuming this will be used within a larger function
-  // summarizeConversationService,
-  // analyzeSentimentForRelationshipUpdateService
+  analyzeSentimentForRelationshipUpdateService,
+  generateAIChatResponseService,
 } from './services/geminiService';
 
 import Header from './components/Header';
@@ -34,17 +28,19 @@ import ChatView from './components/ChatView';
 import GameOverView from './components/GameOverView';
 import LoadingSpinner from './components/LoadingSpinner';
 import ProfileView from './components/ProfileView';
-import ShopView, { CreditPackage } from './components/ShopView';
+import ShopView from './components/ShopView';
 import PaymentModal from './components/PaymentModal';
+import ApiKeyView from './components/ApiKeyView'; // Import the new component
 
 const App: React.FC = () => {
-  const [appScreen, setAppScreenInternal] = useState<AppScreen>(AppScreen.ONBOARDING_SCENARIO); // Default to a loading/onboarding screen
+  const [appScreen, setAppScreenInternal] = useState<AppScreen>(AppScreen.ONBOARDING_SCENARIO);
   const [previousScreenBeforeMenu, setPreviousScreenBeforeMenu] = useState<AppScreen>(AppScreen.ONBOARDING_SCENARIO);
   const [userState, setUserState] = useState<UserState | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true); // Start with loading true
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null); // State for the API key
 
   // For Shop Payment Modal
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -67,39 +63,48 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // User is signed in, set the UID
         setCurrentUserId(user.uid);
       } else {
-        // User is signed out, sign them in anonymously
         signInAnonymously(auth).catch((error) => {
           console.error("Anonymous sign-in failed:", error);
           setErrorMessage("Failed to start a session. Please refresh the page.");
         });
       }
     });
-    return () => unsubscribe(); // Cleanup on unmount
+    return () => unsubscribe();
   }, []);
 
-  // Effect for fetching user data and session once we have a user ID
+  // Effect for fetching user data, checking API key, and loading session
   useEffect(() => {
     if (!currentUserId) return;
 
     const hydrateState = async () => {
       setIsLoading(true);
       try {
-        let userProfile = await getUserProfile(currentUserId);
-        if (!userProfile) {
-          await createUserProfile(currentUserId);
-          userProfile = await getUserProfile(currentUserId);
-        }
-        setUserState(userProfile);
+        // 1. Check for API Key
+        const savedKey = localStorage.getItem('geminiApiKey');
+        if (savedKey) {
+          setGeminiApiKey(savedKey);
 
-        const activeSession = await getActiveSession(currentUserId);
-        if (activeSession) {
-          setGameState(activeSession);
-          setAppScreen(AppScreen.CHATTING);
+          // 2. Load User Profile
+          let userProfile = await getUserProfile(currentUserId);
+          if (!userProfile) {
+            await createUserProfile(currentUserId);
+            userProfile = await getUserProfile(currentUserId);
+          }
+          setUserState(userProfile);
+
+          // 3. Load Active Session
+          const activeSession = await getActiveSession(currentUserId);
+          if (activeSession) {
+            setGameState(activeSession);
+            setAppScreen(AppScreen.CHATTING);
+          } else {
+            setAppScreen(AppScreen.ONBOARDING_SCENARIO);
+          }
         } else {
-          setAppScreen(AppScreen.ONBOARDING_SCENARIO);
+          // No API Key, force user to enter one
+          setAppScreen(AppScreen.API_KEY_ENTRY);
         }
       } catch (error) {
         console.error("Error hydrating state:", error);
@@ -112,20 +117,36 @@ const App: React.FC = () => {
     hydrateState();
   }, [currentUserId]);
 
-const handleScenarioSelect = async (scenario: Scenario) => {
-    if (!userState || !currentUserId) {
-      setErrorMessage("Please wait for your session to load.");
-      return;
-    }
-    if (scenario.isPremium && !userState.isPremium) {
-      setErrorMessage("This scenario requires a premium account. Visit your profile to upgrade.");
+  const handleSaveApiKey = (key: string) => {
+    if (!key) return;
+    localStorage.setItem('geminiApiKey', key);
+    setGeminiApiKey(key);
+    // After saving the key, we need to load the user profile
+    // The main useEffect will re-run if we reload, but let's just proceed
+    setIsLoading(true);
+    const initializeUser = async () => {
+        if (!currentUserId) return;
+        let userProfile = await getUserProfile(currentUserId);
+        if (!userProfile) {
+          await createUserProfile(currentUserId);
+          userProfile = await getUserProfile(currentUserId);
+        }
+        setUserState(userProfile);
+        setAppScreen(AppScreen.ONBOARDING_SCENARIO);
+        setIsLoading(false);
+    };
+    initializeUser();
+  };
+
+  const handleScenarioSelect = async (scenario: Scenario) => {
+    if (!userState || !currentUserId || !geminiApiKey) {
+      setErrorMessage("API Key not set or session not loaded.");
       return;
     }
     setIsLoading(true);
     setErrorMessage(null);
 
-    // Directly generate the persona
-    const persona = await generateAIPersonaService(scenario);
+    const persona = await generateAIPersonaService(scenario, geminiApiKey);
     if (persona) {
       const newChatHistory: ChatMessage[] = [];
       if (persona.firstAIMessage) {
@@ -148,32 +169,65 @@ const handleScenarioSelect = async (scenario: Scenario) => {
       await saveSession(currentUserId, newGameState);
       setAppScreen(AppScreen.CHATTING);
     } else {
-      setErrorMessage("Failed to generate AI persona. Please try again.");
+      setErrorMessage("Failed to generate AI persona. Check your API key and try again.");
       setAppScreen(AppScreen.ONBOARDING_SCENARIO);
     }
     setIsLoading(false);
   };
 
   const handleSendMessage = useCallback(async (messageText: string) => {
-    if (!currentUserId || !gameState) {
-      setErrorMessage("Session not initialized.");
+    if (!currentUserId || !gameState || !geminiApiKey || !gameState.aiPersona) {
+      setErrorMessage("Session not initialized or API key missing.");
       return;
     }
 
+    // 1. Create the user message and update state immediately for responsiveness
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       sender: 'user',
       text: messageText,
       timestamp: Date.now(),
+      moodAnalysis: undefined, // Placeholder
     };
 
-    const newGameState = {
+    const tempGameState = {
       ...gameState,
       chatHistory: [...gameState.chatHistory, userMessage],
     };
-    setGameState(newGameState);
-    await saveSession(currentUserId, newGameState);
-  }, [currentUserId, gameState]);
+    setGameState(tempGameState);
+
+    // 2. Analyze sentiment in the background
+    const moodAnalysis = await analyzeSentimentForRelationshipUpdateService(messageText, geminiApiKey);
+    if (moodAnalysis) {
+      userMessage.moodAnalysis = moodAnalysis;
+    }
+
+    // 3. Get AI response
+    const aiResponseText = await generateAIChatResponseService(
+        messageText,
+        gameState.conversationSummary,
+        gameState.aiPersona,
+        tempGameState.chatHistory,
+        geminiApiKey
+    );
+
+    const aiMessage: ChatMessage = {
+        id: `ai-${Date.now()}`,
+        sender: 'ai',
+        text: aiResponseText || "I'm not sure how to respond to that. Could you try rephrasing?",
+        timestamp: Date.now(),
+    };
+
+    // 4. Update game state with everything
+    const finalGameState = {
+      ...gameState,
+      chatHistory: [...gameState.chatHistory, userMessage, aiMessage],
+    };
+
+    setGameState(finalGameState);
+    await saveSession(currentUserId, finalGameState);
+
+  }, [currentUserId, gameState, geminiApiKey]);
 
   const handleResetScenario = async () => {
     if (!currentUserId) return;
@@ -221,7 +275,7 @@ const handleScenarioSelect = async (scenario: Scenario) => {
   };
 
   const renderScreen = () => {
-    if (isLoading || !userState) {
+    if (isLoading) {
         return (
           <div className="flex flex-col items-center justify-center min-h-[calc(100vh-100px)]">
             <LoadingSpinner />
@@ -231,10 +285,13 @@ const handleScenarioSelect = async (scenario: Scenario) => {
     }
 
     switch (appScreen) {
+      case AppScreen.API_KEY_ENTRY:
+        return <ApiKeyView onSave={handleSaveApiKey} isLoading={isLoading} />;
       case AppScreen.ONBOARDING_SCENARIO:
+        if (!userState) return <LoadingSpinner />; // Should be handled by main isLoading, but as a fallback
         return <OnboardingView userState={userState} onScenarioSelect={handleScenarioSelect} isLoading={isLoading} />;
       case AppScreen.CHATTING:
-        if (!gameState || !gameState.aiPersona) {
+        if (!gameState || !gameState.aiPersona || !userState) {
           setAppScreen(AppScreen.ONBOARDING_SCENARIO);
           return <LoadingSpinner />;
         }
@@ -244,18 +301,20 @@ const handleScenarioSelect = async (scenario: Scenario) => {
             aiPersona={gameState.aiPersona}
             chatHistory={gameState.chatHistory}
             onSendMessage={handleSendMessage}
-            isLoading={false} // This can be refined later
+            isLoading={false}
             initialSystemMessage={gameState.aiPersona.initialSystemMessage}
           />
         );
       case AppScreen.GAME_OVER:
         return <GameOverView aiPersona={gameState?.aiPersona || null} onReset={handleResetScenario} />;
       case AppScreen.PROFILE:
+        if (!userState) return null;
         return <ProfileView userState={userState} onTogglePremium={handleTogglePremium} onBack={handleNavigateBackFromMenu} />;
       case AppScreen.SHOP:
+        if (!userState) return null;
         return <ShopView userState={userState} onInitiatePurchase={handleInitiatePurchase} onBack={handleNavigateBackFromMenu} />;
       default:
-        setAppScreen(AppScreen.ONBOARDING_SCENARIO); // Default to onboarding
+        setAppScreen(AppScreen.ONBOARDING_SCENARIO);
         return <div className="text-center p-5 dark:text-white">Unknown screen state. Redirecting...</div>;
     }
   };
