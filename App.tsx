@@ -59,6 +59,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log("Auth State Changed. User:", user ? user.uid : 'No User');
       if (user) {
         setCurrentUserId(user.uid);
       } else {
@@ -74,9 +75,11 @@ const App: React.FC = () => {
     if (!currentUserId) return;
 
     const hydrateState = async () => {
+      console.log("User ID detected. Fetching data for:", currentUserId);
       setIsLoading(true);
       try {
         let userProfile = await getUserProfile(currentUserId);
+        console.log("User profile fetched:", userProfile);
         if (!userProfile) {
           await createUserProfile(currentUserId);
           userProfile = await getUserProfile(currentUserId);
@@ -87,12 +90,19 @@ const App: React.FC = () => {
         setUserState(userProfile);
 
         const activeSession = await getActiveSession(currentUserId);
-        if (activeSession) {
+        console.log("Active session fetched:", activeSession);
+        let newScreenValue;
+        if (userProfile && activeSession) {
           setGameState(activeSession);
-          setAppScreen(AppScreen.CHATTING);
+          newScreenValue = AppScreen.CHATTING;
+        } else if (userProfile) {
+          newScreenValue = AppScreen.ONBOARDING_SCENARIO;
         } else {
-          setAppScreen(AppScreen.ONBOARDING_SCENARIO);
+          // Fallback to ensure we always have a valid screen
+          newScreenValue = AppScreen.ONBOARDING_SCENARIO;
         }
+        console.log("Navigating to screen:", newScreenValue);
+        setAppScreen(newScreenValue);
       } catch (error) {
         console.error("Error hydrating state:", error);
         setErrorMessage("Could not load your profile or session.");
@@ -313,8 +323,9 @@ const App: React.FC = () => {
     return <LoadingSpinner />;
   }
 
+  console.log("Final render state:", { isLoading, userState, appScreen });
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100 dark:bg-gray-900">
+    <div className="h-full bg-gray-50 flex flex-col dark:bg-gray-900">
       <Header
         userState={userState}
         onResetScenario={handleResetScenario}
