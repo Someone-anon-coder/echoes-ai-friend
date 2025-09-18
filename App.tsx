@@ -21,6 +21,7 @@ import {
   analyzeSentimentForRelationshipUpdateService,
   generateAIChatResponseService,
 } from './services/geminiService';
+import { MoodLog } from './types';
 
 import Header from './components/Header';
 import JourneySelectionView from './components/JourneySelectionView';
@@ -91,6 +92,10 @@ const App: React.FC = () => {
           if (!userProfile) {
             await createUserProfile(currentUserId);
             userProfile = await getUserProfile(currentUserId);
+          }
+          // Ensure moodHistory is initialized
+          if (userProfile && !userProfile.moodHistory) {
+            userProfile.moodHistory = [];
           }
           setUserState(userProfile);
 
@@ -322,8 +327,9 @@ const App: React.FC = () => {
   const handleTogglePremium = async () => {
     if (!currentUserId || !userState) return;
     const newPremiumStatus = !userState.isPremium;
-    setUserState({ ...userState, isPremium: newPremiumStatus });
-    await updateUserProfile(currentUserId, { isPremium: newPremiumStatus });
+    const updatedUserState = { ...userState, isPremium: newPremiumStatus };
+    setUserState(updatedUserState);
+    await updateUserProfile(currentUserId, updatedUserState);
   };
 
   // Shop related handlers
@@ -336,9 +342,24 @@ const App: React.FC = () => {
     if (!currentUserId || !userState) return;
     const newCredits = userState.credits + creditsToAward;
     setUserState({ ...userState, credits: newCredits });
-    await updateUserProfile(currentUserId, { credits: newCredits });
+    await updateUserProfile(currentUserId, { ...userState, credits: newCredits });
     setIsPaymentModalOpen(false);
     setSelectedPackage(null);
+  };
+
+  const handleLogMood = async (mood: number) => {
+    if (!currentUserId || !userState) return;
+
+    const newLog: MoodLog = {
+      date: new Date().toISOString().split('T')[0],
+      mood: mood,
+    };
+
+    const updatedMoodHistory = [...(userState.moodHistory || []), newLog];
+    const updatedUserState = { ...userState, moodHistory: updatedMoodHistory };
+
+    setUserState(updatedUserState);
+    await updateUserProfile(currentUserId, updatedUserState);
   };
 
   const renderScreen = () => {
@@ -368,6 +389,7 @@ const App: React.FC = () => {
             aiPersona={gameState.aiPersona}
             chatHistory={gameState.chatHistory}
             onSendMessage={handleSendMessage}
+            onLogMood={handleLogMood}
             isLoading={false}
             initialSystemMessage={gameState.aiPersona.initialSystemMessage}
           />

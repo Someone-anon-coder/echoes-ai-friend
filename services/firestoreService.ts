@@ -78,9 +78,9 @@ export const saveSession = async (userId: string, gameState: GameState): Promise
 /**
  * Updates a user's profile in Firestore.
  * @param userId The user's unique Firebase Auth ID.
- * @param profileData The partial UserState object with the fields to update.
+ * @param userState The full UserState object to save.
  */
-export const updateUserProfile = async (userId: string, profileData: Partial<UserState>): Promise<void> => {
+export const updateUserProfile = async (userId: string, userState: UserState): Promise<void> => {
   const userDocRef = doc(db, 'users', userId);
-  await setDoc(userDocRef, profileData, { merge: true });
+  await setDoc(userDocRef, userState, { merge: true });
 };
