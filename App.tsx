@@ -7,7 +7,6 @@ import {
   UserState,
   GameState,
   Scenario,
-  AIGender,
   AIPersona,
   ChatMessage,
 } from './types';
@@ -113,8 +112,8 @@ const App: React.FC = () => {
     hydrateState();
   }, [currentUserId]);
 
-const handleScenarioSelect = (scenario: Scenario) => {
-    if (!userState) {
+const handleScenarioSelect = async (scenario: Scenario) => {
+    if (!userState || !currentUserId) {
       setErrorMessage("Please wait for your session to load.");
       return;
     }
@@ -122,22 +121,11 @@ const handleScenarioSelect = (scenario: Scenario) => {
       setErrorMessage("This scenario requires a premium account. Visit your profile to upgrade.");
       return;
     }
-    setGameState({
-      currentScenario: scenario,
-      aiPersona: null,
-      relationshipScore: INITIAL_RELATIONSHIP_SCORE,
-      chatHistory: [],
-      conversationSummary: ""
-    });
-    setAppScreen(AppScreen.ONBOARDING_GENDER);
-    setErrorMessage(null);
-  };
-
-  const handleGenderSelect = async (gender: AIGender) => {
-    if (!gameState || !gameState.currentScenario || !currentUserId) return;
     setIsLoading(true);
     setErrorMessage(null);
-    const persona = await generateAIPersonaService(gameState.currentScenario, gender);
+
+    // Directly generate the persona
+    const persona = await generateAIPersonaService(scenario);
     if (persona) {
       const newChatHistory: ChatMessage[] = [];
       if (persona.firstAIMessage) {
@@ -149,10 +137,12 @@ const handleScenarioSelect = (scenario: Scenario) => {
         };
         newChatHistory.push(firstMsg);
       }
-      const newGameState = {
-        ...gameState,
+      const newGameState: GameState = {
+        currentScenario: scenario,
         aiPersona: persona,
-        chatHistory: newChatHistory
+        relationshipScore: INITIAL_RELATIONSHIP_SCORE,
+        chatHistory: newChatHistory,
+        conversationSummary: ""
       };
       setGameState(newGameState);
       await saveSession(currentUserId, newGameState);
@@ -242,9 +232,7 @@ const handleScenarioSelect = (scenario: Scenario) => {
 
     switch (appScreen) {
       case AppScreen.ONBOARDING_SCENARIO:
-        return <OnboardingView currentStep="scenario" userState={userState} onScenarioSelect={handleScenarioSelect} onGenderSelect={handleGenderSelect} isLoading={isLoading} />;
-      case AppScreen.ONBOARDING_GENDER:
-        return <OnboardingView currentStep="gender" userState={userState} onScenarioSelect={handleScenarioSelect} onGenderSelect={handleGenderSelect} isLoading={isLoading} />;
+        return <OnboardingView userState={userState} onScenarioSelect={handleScenarioSelect} isLoading={isLoading} />;
       case AppScreen.CHATTING:
         if (!gameState || !gameState.aiPersona) {
           setAppScreen(AppScreen.ONBOARDING_SCENARIO);
