@@ -353,15 +353,6 @@ const App: React.FC = () => {
   };
 
   const renderScreen = () => {
-    if (isLoading) {
-        return (
-          <div className="flex flex-col items-center justify-center min-h-[calc(100vh-100px)]">
-            <LoadingSpinner />
-            <p className="mt-4 text-gray-700 dark:text-gray-300">Loading your Echoes experience...</p>
-          </div>
-        );
-    }
-
     switch (appScreen) {
       case AppScreen.LOGIN:
         return <LoginView onGoogleSignIn={handleGoogleSignIn} isLoading={isLoading} />;
@@ -397,6 +388,10 @@ const App: React.FC = () => {
         return <div className="text-center p-5 dark:text-white">Unknown screen state. Redirecting...</div>;
     }
   };
+
+  if (isLoading || !userState) {
+    return <LoadingSpinner />;
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-100 dark:bg-gray-900">
