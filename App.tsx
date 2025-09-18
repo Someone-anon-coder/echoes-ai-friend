@@ -5,10 +5,10 @@ import {
   AppScreen,
   UserState,
   GameState,
-  Scenario,
+  Journey,
   ChatMessage,
 } from './types';
-import { INITIAL_RELATIONSHIP_SCORE } from './constants';
+import { INITIAL_RELATIONSHIP_SCORE, JOURNEY_DEFINITIONS } from './constants';
 import {
   getUserProfile,
   createUserProfile,
@@ -23,7 +23,7 @@ import {
 } from './services/geminiService';
 
 import Header from './components/Header';
-import OnboardingView from './components/OnboardingView';
+import JourneySelectionView from './components/JourneySelectionView';
 import ChatView from './components/ChatView';
 import GameOverView from './components/GameOverView';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -138,7 +138,7 @@ const App: React.FC = () => {
     initializeUser();
   };
 
-  const handleScenarioSelect = async (scenario: Scenario) => {
+  const handleJourneySelect = async (journey: Journey) => {
     if (!userState || !currentUserId || !geminiApiKey) {
       setErrorMessage("API Key not set or session not loaded.");
       return;
@@ -146,33 +146,93 @@ const App: React.FC = () => {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const persona = await generateAIPersonaService(scenario, geminiApiKey);
+    const journeyDefinition = JOURNEY_DEFINITIONS.find(j => j.id === journey.id);
+    if (!journeyDefinition) {
+      setErrorMessage("Selected journey not found.");
+      return;
+    }
+
+    // Generate a persona based on the journey's context (optional, can be simplified)
+    const persona = await generateAIPersonaService({ name: journey.name, description: journey.description, isPremium: false, id: journey.id }, geminiApiKey);
+
     if (persona) {
-      const newChatHistory: ChatMessage[] = [];
-      if (persona.firstAIMessage) {
-        const firstMsg: ChatMessage = {
-          id: `ai-init-${persona.name}-${Date.now()}`,
-          sender: 'ai',
-          text: persona.firstAIMessage,
-          timestamp: Date.now(),
-        };
-        newChatHistory.push(firstMsg);
-      }
+      const firstStep = journeyDefinition.steps[0];
+      const firstMessage: ChatMessage = {
+        id: `system-journey-start-${Date.now()}`,
+        sender: 'system',
+        text: firstStep.content,
+        timestamp: Date.now(),
+      };
+
       const newGameState: GameState = {
-        currentScenario: scenario,
+        currentScenario: null, // Or you can adapt this to hold journey info
         aiPersona: persona,
         relationshipScore: INITIAL_RELATIONSHIP_SCORE,
-        chatHistory: newChatHistory,
-        conversationSummary: ""
+        chatHistory: [firstMessage],
+        conversationSummary: "",
+        activeJourneyId: journey.id,
+        currentJourneyStepId: 0
       };
-      setGameState(newGameState);
-      await saveSession(currentUserId, newGameState);
+
+      const finalState = advanceJourney(newGameState);
+      setGameState(finalState);
+      await saveSession(currentUserId, finalState);
       setAppScreen(AppScreen.CHATTING);
     } else {
-      setErrorMessage("Failed to generate AI persona. Check your API key and try again.");
+      setErrorMessage("Failed to generate AI persona for the journey. Check your API key.");
       setAppScreen(AppScreen.ONBOARDING_SCENARIO);
     }
     setIsLoading(false);
+  };
+
+  const advanceJourney = (currentGameState: GameState): GameState => {
+    if (!currentGameState.activeJourneyId || currentGameState.currentJourneyStepId === undefined) {
+      return currentGameState;
+    }
+
+    const journey = JOURNEY_DEFINITIONS.find(j => j.id === currentGameState.activeJourneyId);
+    if (!journey) {
+      setErrorMessage("Error: Active journey not found during advancement.");
+      return {
+        ...currentGameState,
+        activeJourneyId: undefined,
+        currentJourneyStepId: undefined,
+      };
+    }
+
+    let updatedGameState = { ...currentGameState };
+    let nextStepIndex = updatedGameState.currentJourneyStepId + 1;
+
+    while (journey.steps[nextStepIndex] && journey.steps[nextStepIndex].type === 'PROMPT') {
+      const nextStep = journey.steps[nextStepIndex];
+      const systemMessage: ChatMessage = {
+        id: `system-journey-${nextStep.stepId}-${Date.now()}`,
+        sender: 'system',
+        text: nextStep.content,
+        timestamp: Date.now(),
+      };
+      updatedGameState.chatHistory.push(systemMessage);
+      updatedGameState.currentJourneyStepId = nextStepIndex;
+      nextStepIndex++;
+    }
+
+    // Check if the journey is over AFTER the loop
+    if (!journey.steps[nextStepIndex]) {
+      const concludingMessage: ChatMessage = {
+        id: `system-journey-complete-${Date.now()}`,
+        sender: 'system',
+        text: "You've completed this journey. I hope it was helpful. You can now chat freely or start a new journey.",
+        timestamp: Date.now(),
+      };
+      updatedGameState.chatHistory.push(concludingMessage);
+      updatedGameState.activeJourneyId = undefined;
+      updatedGameState.currentJourneyStepId = undefined;
+    } else {
+        // If the journey is not over, the next step must be a USER_INPUT, so we update the step counter
+        updatedGameState.currentJourneyStepId = nextStepIndex;
+    }
+
+    return updatedGameState;
   };
 
   const handleSendMessage = useCallback(async (messageText: string) => {
@@ -196,36 +256,41 @@ const App: React.FC = () => {
     };
     setGameState(tempGameState);
 
-    // 2. Analyze sentiment in the background
-    const moodAnalysis = await analyzeSentimentForRelationshipUpdateService(messageText, geminiApiKey);
-    if (moodAnalysis) {
-      userMessage.moodAnalysis = moodAnalysis;
+    // Journey Mode vs. Free-Chat Mode
+    if (gameState.activeJourneyId && gameState.currentJourneyStepId !== undefined) {
+      const advancedState = advanceJourney(tempGameState);
+      setGameState(advancedState);
+      await saveSession(currentUserId, advancedState);
+    } else {
+      // Free-Chat Mode Logic (existing logic)
+      const moodAnalysis = await analyzeSentimentForRelationshipUpdateService(messageText, geminiApiKey);
+      if (moodAnalysis) {
+        userMessage.moodAnalysis = moodAnalysis;
+      }
+
+      const aiResponseText = await generateAIChatResponseService(
+          messageText,
+          gameState.conversationSummary,
+          gameState.aiPersona,
+          tempGameState.chatHistory,
+          geminiApiKey
+      );
+
+      const aiMessage: ChatMessage = {
+          id: `ai-${Date.now()}`,
+          sender: 'ai',
+          text: aiResponseText || "I'm not sure how to respond to that. Could you try rephrasing?",
+          timestamp: Date.now(),
+      };
+
+      const finalGameState = {
+        ...tempGameState,
+        chatHistory: [...tempGameState.chatHistory, aiMessage],
+      };
+
+      setGameState(finalGameState);
+      await saveSession(currentUserId, finalGameState);
     }
-
-    // 3. Get AI response
-    const aiResponseText = await generateAIChatResponseService(
-        messageText,
-        gameState.conversationSummary,
-        gameState.aiPersona,
-        tempGameState.chatHistory,
-        geminiApiKey
-    );
-
-    const aiMessage: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        sender: 'ai',
-        text: aiResponseText || "I'm not sure how to respond to that. Could you try rephrasing?",
-        timestamp: Date.now(),
-    };
-
-    // 4. Update game state with everything
-    const finalGameState = {
-      ...gameState,
-      chatHistory: [...gameState.chatHistory, userMessage, aiMessage],
-    };
-
-    setGameState(finalGameState);
-    await saveSession(currentUserId, finalGameState);
 
   }, [currentUserId, gameState, geminiApiKey]);
 
@@ -237,6 +302,8 @@ const App: React.FC = () => {
       relationshipScore: INITIAL_RELATIONSHIP_SCORE,
       chatHistory: [],
       conversationSummary: "",
+      activeJourneyId: undefined,
+      currentJourneyStepId: undefined,
     };
     setGameState(newGameState);
     await saveSession(currentUserId, newGameState);
@@ -289,7 +356,7 @@ const App: React.FC = () => {
         return <ApiKeyView onSave={handleSaveApiKey} isLoading={isLoading} />;
       case AppScreen.ONBOARDING_SCENARIO:
         if (!userState) return <LoadingSpinner />; // Should be handled by main isLoading, but as a fallback
-        return <OnboardingView userState={userState} onScenarioSelect={handleScenarioSelect} isLoading={isLoading} />;
+        return <JourneySelectionView userState={userState} onJourneySelect={handleJourneySelect} isLoading={isLoading} />;
       case AppScreen.CHATTING:
         if (!gameState || !gameState.aiPersona || !userState) {
           setAppScreen(AppScreen.ONBOARDING_SCENARIO);

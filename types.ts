@@ -81,12 +81,27 @@ export enum RelationshipLevel {
   BEST_FRIEND = "Best Friend", // 76-100
 }
 
+export interface JourneyStep {
+  stepId: number;
+  type: 'PROMPT' | 'USER_INPUT';
+  content: string;
+}
+
+export interface Journey {
+  id: string;
+  name: string;
+  description: string;
+  steps: JourneyStep[];
+}
+
 export interface GameState {
   currentScenario: Scenario | null;
   aiPersona: AIPersona | null;
   relationshipScore: number; // 0-100
   chatHistory: ChatMessage[];
   conversationSummary: string; // Accumulated summaries for AI memory
+  activeJourneyId?: string;
+  currentJourneyStepId?: number;
 }
 
 // Props for components that need access to user state and game state
