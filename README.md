@@ -4,12 +4,12 @@ This project is a submission for the **Google Cloud Gen AI Hackathon**, for the 
 
 ## Project Overview
 
-Aura is a web-based application designed to provide a safe, empathetic, and confidential space for youth to explore their feelings and engage in structured wellness exercises. It features an AI companion, powered by Google's Gemini API, that users can interact with. The core principle of Aura is user privacy, achieved through a "Bring-Your-Own-Key" model that ensures no personal conversations are ever stored on a central server.
+Aura is a web-based application designed to provide a safe, empathetic, and confidential space for youth to explore their feelings and engage in structured wellness exercises. It features an AI companion, powered by Google's Gemini API, that users can interact with. The core principle of Aura is user privacy, achieved through a secure Google Sign-In flow that allows the app to access the Gemini API on the user's behalf without ever exposing their private keys.
 
 ## Core Features
 
-*   **Anonymous & Secure Login**: Utilizes Firebase Authentication for hassle-free anonymous sessions.
-*   **Bring-Your-Own-Key Model**: Ensures user privacy and zero cost for the platform by having the user provide their own Gemini API key, which is stored only in their browser's local storage.
+*   **Secure Google Sign-In**: Utilizes Firebase Authentication for a seamless and secure login experience.
+*   **Seamless Google Sign-In for API Access**: Ensures user privacy and a smooth onboarding experience by using Google OAuth 2.0. Users grant the application permission to use the Gemini API on their behalf, eliminating the need for manual API key management.
 *   **Empathetic AI Companion**: The AI, powered by the Gemini API, is designed to be a supportive and non-judgmental conversational partner.
 *   **Structured Wellness Journeys**: Guided exercises for topics like Gratitude and Mindful Breathing to help users develop positive mental health habits.
 *   **Daily Mood Tracking & Visualization**: Users can log their mood daily and see a chart of their mood over time, helping them recognize patterns.
@@ -27,12 +27,13 @@ Aura is a web-based application designed to provide a safe, empathetic, and conf
 
 ## How It Works (Architecture)
 
-Aura's architecture is built around the "Bring-Your-Own-Key" (BYOK) model to maximize user privacy.
+Aura's architecture is built around Google's OAuth 2.0 protocol to provide a secure and user-friendly experience.
 
-1.  **User-Provided API Key**: The user is prompted to enter their own Google Gemini API key.
-2.  **Local Storage**: This key is stored exclusively in the browser's `localStorage`. It is **never** sent to or stored on any backend server associated with Aura.
-3.  **Client-Side AI Processing**: All calls to the Gemini API are made directly from the user's browser. This means the conversation content, API key, and all interactions remain on the client-side, ensuring a high degree of confidentiality.
-4.  **Firebase for User Data**: Firebase is used only for authentication (to create a unique, anonymous user ID) and to store non-sensitive application state, such as mood history and completed journeys. No conversational data is stored in Firestore.
+1.  **Google Sign-In**: The user signs in with their Google account through the standard Firebase popup.
+2.  **OAuth Consent**: During the sign-in process, the application requests the user's permission (consent) to access the Google Generative Language API (`https://www.googleapis.com/auth/generative-language.retriever` scope).
+3.  **Secure Token Handling**: Upon successful sign-in, Firebase provides a short-lived OAuth access token to the client.
+4.  **Client-Side AI Processing**: This access token is used to make authenticated calls to the Gemini API directly from the user's browser. The token is securely managed by the application and refreshed automatically by Firebase, ensuring a high degree of confidentiality and a seamless user experience without manual key management.
+5.  **Firebase for User Data**: Firebase is used for authentication and to store non-sensitive application state, such as mood history and completed journeys. No conversational data is stored in Firestore.
 
 ## Setup and Local Development
 
@@ -49,18 +50,21 @@ To run this project locally, follow these steps:
     npm install
     ```
 
-3.  **Create a local environment file:**
-    Duplicate the `.env.example` file and rename it to `.env.local`.
+3.  **Configure Firebase:**
+    - Create a new project in the [Firebase Console](https://console.firebase.google.com/).
+    - Add a new Web application to your project.
+    - Copy the `firebaseConfig` object from your project settings.
+    - Paste your configuration into the `firebaseConfig.ts` file in the root of this project.
 
-4.  **Get your Gemini API Key:**
-    - Go to [Google AI Studio](https://aistudio.google.com/).
-    - Click on "**Get API key**" and create a new key.
-    - Copy the key.
+4.  **Configure Google Cloud for OAuth:**
+    - In the [Google Cloud Console](https://console.cloud.google.com/), navigate to your Firebase project.
+    - Go to **APIs & Services -> OAuth consent screen**.
+    - Configure the consent screen. For testing, you can keep it in "Testing" mode and add your own Google account as a test user.
+    - Go to **APIs & Services -> Credentials**.
+    - Find your web app's "OAuth 2.0 Client ID" and ensure your app's domain (e.g., `localhost` for local development, your Firebase hosting URL for production) is listed under "Authorized JavaScript origins".
+    - You may need to add the client ID to your `firebaseConfig.ts` file if it's not already there.
 
-5.  **Add your Firebase and Gemini API keys to `.env.local`:**
-    You will need to create a Firebase project and add your web app configuration to the environment file. The Gemini key from the previous step should also be added.
-
-6.  **Run the development server:**
+5.  **Run the development server:**
     ```bash
     npm run dev
     ```

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
+import { onAuthStateChanged, signInAnonymously, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { auth } from './firebaseConfig';
 import {
   AppScreen,
@@ -31,17 +31,17 @@ import LoadingSpinner from './components/LoadingSpinner';
 import ProfileView from './components/ProfileView';
 import ShopView from './components/ShopView';
 import PaymentModal from './components/PaymentModal';
-import ApiKeyView from './components/ApiKeyView'; // Import the new component
+import LoginView from './components/LoginView';
 
 const App: React.FC = () => {
-  const [appScreen, setAppScreenInternal] = useState<AppScreen>(AppScreen.ONBOARDING_SCENARIO);
-  const [previousScreenBeforeMenu, setPreviousScreenBeforeMenu] = useState<AppScreen>(AppScreen.ONBOARDING_SCENARIO);
+  const [appScreen, setAppScreenInternal] = useState<AppScreen>(AppScreen.LOGIN);
+  const [previousScreenBeforeMenu, setPreviousScreenBeforeMenu] = useState<AppScreen>(AppScreen.LOGIN);
   const [userState, setUserState] = useState<UserState | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null); // State for the API key
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   // For Shop Payment Modal
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -60,56 +60,67 @@ const App: React.FC = () => {
     setAppScreenInternal(targetScreen);
   };
 
-  // Main effect for handling anonymous authentication
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.addScope('https://www.googleapis.com/auth/generative-language.retriever');
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential) {
+        setAccessToken(credential.accessToken || null);
+      }
+      // The onAuthStateChanged listener will handle the user state update
+      setAppScreen(AppScreen.ONBOARDING_SCENARIO);
+    } catch (error) {
+      console.error("Google sign-in failed:", error);
+      setErrorMessage("Failed to sign in with Google. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Main effect for handling authentication state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setCurrentUserId(user.uid);
       } else {
-        signInAnonymously(auth).catch((error) => {
-          console.error("Anonymous sign-in failed:", error);
-          setErrorMessage("Failed to start a session. Please refresh the page.");
-        });
+        // No user is signed in, so we show the login screen.
+        setCurrentUserId(null);
+        setAppScreen(AppScreen.LOGIN);
+        setIsLoading(false);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Effect for fetching user data, checking API key, and loading session
+  // Effect for fetching user data and loading session
   useEffect(() => {
     if (!currentUserId) return;
 
     const hydrateState = async () => {
       setIsLoading(true);
       try {
-        // 1. Check for API Key
-        const savedKey = localStorage.getItem('geminiApiKey');
-        if (savedKey) {
-          setGeminiApiKey(savedKey);
+        // Load User Profile
+        let userProfile = await getUserProfile(currentUserId);
+        if (!userProfile) {
+          await createUserProfile(currentUserId);
+          userProfile = await getUserProfile(currentUserId);
+        }
+        // Ensure moodHistory is initialized
+        if (userProfile && !userProfile.moodHistory) {
+          userProfile.moodHistory = [];
+        }
+        setUserState(userProfile);
 
-          // 2. Load User Profile
-          let userProfile = await getUserProfile(currentUserId);
-          if (!userProfile) {
-            await createUserProfile(currentUserId);
-            userProfile = await getUserProfile(currentUserId);
-          }
-          // Ensure moodHistory is initialized
-          if (userProfile && !userProfile.moodHistory) {
-            userProfile.moodHistory = [];
-          }
-          setUserState(userProfile);
-
-          // 3. Load Active Session
-          const activeSession = await getActiveSession(currentUserId);
-          if (activeSession) {
-            setGameState(activeSession);
-            setAppScreen(AppScreen.CHATTING);
-          } else {
-            setAppScreen(AppScreen.ONBOARDING_SCENARIO);
-          }
+        // Load Active Session
+        const activeSession = await getActiveSession(currentUserId);
+        if (activeSession) {
+          setGameState(activeSession);
+          setAppScreen(AppScreen.CHATTING);
         } else {
-          // No API Key, force user to enter one
-          setAppScreen(AppScreen.API_KEY_ENTRY);
+          setAppScreen(AppScreen.ONBOARDING_SCENARIO);
         }
       } catch (error) {
         console.error("Error hydrating state:", error);
@@ -122,30 +133,9 @@ const App: React.FC = () => {
     hydrateState();
   }, [currentUserId]);
 
-  const handleSaveApiKey = (key: string) => {
-    if (!key) return;
-    localStorage.setItem('geminiApiKey', key);
-    setGeminiApiKey(key);
-    // After saving the key, we need to load the user profile
-    // The main useEffect will re-run if we reload, but let's just proceed
-    setIsLoading(true);
-    const initializeUser = async () => {
-        if (!currentUserId) return;
-        let userProfile = await getUserProfile(currentUserId);
-        if (!userProfile) {
-          await createUserProfile(currentUserId);
-          userProfile = await getUserProfile(currentUserId);
-        }
-        setUserState(userProfile);
-        setAppScreen(AppScreen.ONBOARDING_SCENARIO);
-        setIsLoading(false);
-    };
-    initializeUser();
-  };
-
   const handleJourneySelect = async (journey: Journey) => {
-    if (!userState || !currentUserId || !geminiApiKey) {
-      setErrorMessage("API Key not set or session not loaded.");
+    if (!userState || !currentUserId || !accessToken) {
+      setErrorMessage("Session not loaded or access token is missing.");
       return;
     }
     setIsLoading(true);
@@ -158,7 +148,7 @@ const App: React.FC = () => {
     }
 
     // Generate a persona based on the journey's context (optional, can be simplified)
-    const persona = await generateAIPersonaService({ name: journey.name, description: journey.description, isPremium: false, id: journey.id }, geminiApiKey);
+    const persona = await generateAIPersonaService({ name: journey.name, description: journey.description, isPremium: false, id: journey.id }, accessToken);
 
     if (persona) {
       const firstStep = journeyDefinition.steps[0];
@@ -241,8 +231,8 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = useCallback(async (messageText: string) => {
-    if (!currentUserId || !gameState || !geminiApiKey || !gameState.aiPersona) {
-      setErrorMessage("Session not initialized or API key missing.");
+    if (!currentUserId || !gameState || !gameState.aiPersona || !accessToken) {
+      setErrorMessage("Session not initialized or access token is missing.");
       return;
     }
 
@@ -268,7 +258,7 @@ const App: React.FC = () => {
       await saveSession(currentUserId, advancedState);
     } else {
       // Free-Chat Mode Logic (existing logic)
-      const moodAnalysis = await analyzeSentimentForRelationshipUpdateService(messageText, geminiApiKey);
+      const moodAnalysis = await analyzeSentimentForRelationshipUpdateService(messageText, accessToken);
       if (moodAnalysis) {
         userMessage.moodAnalysis = moodAnalysis;
       }
@@ -278,7 +268,7 @@ const App: React.FC = () => {
           gameState.conversationSummary,
           gameState.aiPersona,
           tempGameState.chatHistory,
-          geminiApiKey
+          accessToken
       );
 
       const aiMessage: ChatMessage = {
@@ -297,7 +287,7 @@ const App: React.FC = () => {
       await saveSession(currentUserId, finalGameState);
     }
 
-  }, [currentUserId, gameState, geminiApiKey]);
+  }, [currentUserId, gameState, accessToken]);
 
   const handleResetScenario = async () => {
     if (!currentUserId) return;
@@ -373,8 +363,8 @@ const App: React.FC = () => {
     }
 
     switch (appScreen) {
-      case AppScreen.API_KEY_ENTRY:
-        return <ApiKeyView onSave={handleSaveApiKey} isLoading={isLoading} />;
+      case AppScreen.LOGIN:
+        return <LoginView onGoogleSignIn={handleGoogleSignIn} isLoading={isLoading} />;
       case AppScreen.ONBOARDING_SCENARIO:
         if (!userState) return <LoadingSpinner />; // Should be handled by main isLoading, but as a fallback
         return <JourneySelectionView userState={userState} onJourneySelect={handleJourneySelect} isLoading={isLoading} />;
