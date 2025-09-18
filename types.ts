@@ -2,7 +2,6 @@
 export enum AppScreen {
   LOGIN, // New screen for user login
   ONBOARDING_SCENARIO,
-  ONBOARDING_GENDER,
   CHATTING,
   GAME_OVER,
   PROFILE,
@@ -16,23 +15,15 @@ export interface Scenario {
   isPremium: boolean;
 }
 
-export enum AIGender {
-  MALE = "Male",
-  FEMALE = "Female",
-  NON_BINARY = "Non-binary",
-}
-
 export interface AIPersona {
-  name: string;
-  gender: AIGender;
-  hobbies: string[];
+  name: string; // This will always be "Aura"
   personalityTraits: string[];
-  secret: string;
+  hobbies: string[];
   initialSystemMessage: string;
-  firstAIMessage?: string; // Optional: AI's first message if it speaks first
+  firstAIMessage?: string;
   // For AI busy state
   isBusy: boolean;
-  busyReason?: string; 
+  busyReason?: string;
   busyUntil?: number; // Timestamp
 }
 
